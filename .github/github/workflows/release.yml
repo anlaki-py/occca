@@ -1,0 +1,26 @@
+name: Auto Backup Release
+
+on:
+  push:
+    branches:
+      - main  # change if your branch is different
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get timestamp
+        id: timestamp
+        run: echo "tag=backup-$(date +'%Y-%m-%d_%H-%M-%S')" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.timestamp.outputs.tag }}
+          name: "Backup ${{ steps.timestamp.outputs.tag }}"
+          generate_release_notes: true

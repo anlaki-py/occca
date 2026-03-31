@@ -105,7 +105,3 @@ occca/
 ├── package.json
 └── tsconfig.json
 ```
-
-## License
-
-MIT
