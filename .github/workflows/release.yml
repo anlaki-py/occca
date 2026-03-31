@@ -3,7 +3,7 @@ name: Auto Backup Release
 on:
   push:
     branches:
-      - main  # change if your branch is different
+      - master
 
 jobs:
   release:
