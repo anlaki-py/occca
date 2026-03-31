@@ -1,0 +1,32 @@
+{
+  "name": "occca",
+  "version": "1.0.0",
+  "description": "OpenAI Compatible CLI Coding Agent - A minimal agentic coding CLI using OpenAI-compatible APIs",
+  "type": "module",
+  "main": "dist/entrypoints/cli.js",
+  "bin": {
+    "occca": "./bin/occca.js"
+  },
+  "scripts": {
+    "dev": "node --no-deprecation --import tsx/esm src/entrypoints/cli.ts",
+    "build": "tsc",
+    "start": "node --no-deprecation dist/entrypoints/cli.js",
+    "preview": "tsx src/entrypoints/cli.ts"
+  },
+  "keywords": ["cli", "coding-agent", "openai", "ai", "developer-tools"],
+  "license": "MIT",
+  "dependencies": {
+    "chalk": "^5.3.0",
+    "commander": "^12.1.0",
+    "fast-glob": "^3.3.2",
+    "marked": "^14.1.0",
+    "openai": "^4.73.0",
+    "ora": "^8.1.0",
+    "strip-ansi": "^7.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}
