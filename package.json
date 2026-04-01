@@ -11,9 +11,17 @@
     "dev": "node --no-deprecation --import tsx/esm src/entrypoints/cli.ts",
     "build": "tsc",
     "start": "node --no-deprecation dist/entrypoints/cli.js",
-    "preview": "tsx src/entrypoints/cli.ts"
+    "preview": "tsx src/entrypoints/cli.ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
-  "keywords": ["cli", "coding-agent", "openai", "ai", "developer-tools"],
+  "keywords": [
+    "cli",
+    "coding-agent",
+    "openai",
+    "ai",
+    "developer-tools"
+  ],
   "license": "MIT",
   "dependencies": {
     "chalk": "^5.3.0",
@@ -27,6 +35,7 @@
   "devDependencies": {
     "@types/node": "^22.9.0",
     "tsx": "^4.19.0",
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "vitest": "^4.1.2"
   }
 }

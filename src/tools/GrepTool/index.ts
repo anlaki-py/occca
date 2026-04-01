@@ -58,8 +58,10 @@ export async function executeGrep(args: Record<string, unknown>): Promise<string
     const escapedPattern = pattern.replace(/"/g, '\\"');
 
     // Security exclusions applied to every search
+    // Args are like ['--glob', '!.git/**', '--glob', '!.bashrc', ...]
+    // They must NOT be individually quoted — --glob must be a raw flag
     const securityArgs = getSecurityRipgrepArgs();
-    const securityFlags = securityArgs.map(arg => `"${arg}"`).join(' ');
+    const securityFlags = securityArgs.join(' ');
 
     // Build the include filter if specified
     const includeArg = include ? `--glob "${include}"` : '';
