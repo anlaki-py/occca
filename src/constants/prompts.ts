@@ -11,6 +11,7 @@ export function getSystemPrompt(model: string): string {
     getDoingTasksSection(),
     getActionsSection(),
     getUsingToolsSection(),
+    getFileSearchBehaviorSection(),
     getToneAndStyleSection(),
     getOutputEfficiencySection(),
     getEnvironmentSection(model),
@@ -75,6 +76,20 @@ function getUsingToolsSection(): string {
    - Reserve using the Bash tool exclusively for system commands and terminal operations that require shell execution.
  - You can call multiple tools in a single response. If you intend to call multiple tools and there are no dependencies between them, make all independent tool calls in parallel.
  - If the user asks for help inform them of available commands like /help, /config, /clear, /compact.`;
+}
+
+function getFileSearchBehaviorSection(): string {
+  return `# File search and .gitignore behavior
+
+Your file tools have different filtering behaviors by design. Choose the right tool based on what you need:
+
+ - **Grep**: Respects .gitignore. Use for searching code logic and definitions. Results will NOT include files in node_modules, dist, or other gitignored paths. This keeps search results clean and relevant.
+ - **Glob**: Does NOT respect .gitignore. Use for finding specific files by name or extension, including build artifacts, config files, or other ignored files that may be needed for diagnosis.
+ - **LS**: Respects .gitignore. Directory listings hide gitignored entries and show a count of hidden items. Use for understanding project structure.
+ - **Bash**: No filtering. Raw shell commands like ls or find have no .gitignore filtering. Prefer Grep, Glob, or LS instead.
+ - **Read/Write/Edit**: No filtering. These tools operate on specific file paths and do not perform any .gitignore checks. You can read, write, and edit any file.
+
+Security note: Certain sensitive files and directories (.git, .gitconfig, .bashrc, .npmrc) are always excluded from search and glob results regardless of .gitignore settings.`;
 }
 
 function getToneAndStyleSection(): string {

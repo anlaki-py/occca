@@ -1,6 +1,7 @@
 import fg from 'fast-glob';
 import type OpenAI from 'openai';
 import { getCwd } from '../../utils/helpers.js';
+import { getSecurityGlobExclusions } from '../../constants/security.js';
 
 export const globTool: OpenAI.Chat.Completions.ChatCompletionTool = {
   type: 'function',
@@ -9,6 +10,7 @@ export const globTool: OpenAI.Chat.Completions.ChatCompletionTool = {
     description: `Fast file pattern matching tool that works with any codebase size.
 - Supports glob patterns like "**/*.js" or "src/**/*.ts"
 - Returns matching file paths sorted by modification time
+- Does NOT respect .gitignore — finds all files including ignored ones (build artifacts, configs, etc.)
 - Use this tool when you need to find files by name patterns
 - Use this instead of 'find' or 'ls' via Bash`,
     parameters: {
@@ -28,6 +30,14 @@ export const globTool: OpenAI.Chat.Completions.ChatCompletionTool = {
   },
 };
 
+/**
+ * Executes a glob file search using fast-glob.
+ * Does NOT respect .gitignore (full discovery mode) but always applies
+ * security denylist exclusions for dangerous files and directories.
+ *
+ * @param args - { pattern, path? }
+ * @returns newline-separated list of matching file paths, sorted by modification time
+ */
 export async function executeGlob(args: Record<string, unknown>): Promise<string> {
   const pattern = String(args.pattern || '');
   const searchPath = args.path ? String(args.path) : getCwd();
@@ -37,6 +47,9 @@ export async function executeGlob(args: Record<string, unknown>): Promise<string
   }
 
   try {
+    // Security exclusions always applied, regardless of gitignore state
+    const securityIgnore = getSecurityGlobExclusions();
+
     const files = await fg(pattern, {
       cwd: searchPath,
       absolute: true,
@@ -44,12 +57,16 @@ export async function executeGlob(args: Record<string, unknown>): Promise<string
       onlyFiles: true,
       stats: true,
       suppressErrors: true,
+      // Discovery mode: do NOT respect .gitignore (matches Claude Code behavior)
+      // Security denylist is always enforced
+      ignore: securityIgnore,
     });
 
     if (files.length === 0) {
       return `No files found matching pattern: ${pattern}`;
     }
 
+    // Sort by most recently modified first
     files.sort((a, b) => {
       const aTime = a.stats?.mtimeMs ?? 0;
       const bTime = b.stats?.mtimeMs ?? 0;
