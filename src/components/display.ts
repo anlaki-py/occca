@@ -112,10 +112,9 @@ export function printHelp(): void {
   console.log(c.subtle('  ' + '─'.repeat(50)));
   console.log('');
   const vars = [
-    ['OPENAI_API_KEY',    'Your API key'],
-    ['OPENAI_BASE_URL',   'API base URL (for custom providers)'],
-    ['OCCCA_MODEL',       'Model to use (default: gpt-4o)'],
-    ['OCCCA_MAX_TOKENS',  'Max response tokens (default: 16384)'],
+    ['OPENAI_API_KEY', 'Your API key'],
+    ['OPENAI_BASE_URL', 'API base URL (for custom providers)'],
+    ['OCCCA_MODEL', 'Model to use (default: gpt-4o)'],
     ['OCCCA_TEMPERATURE', 'Sampling temperature (default: 0)'],
   ];
   for (const [name, desc] of vars) {

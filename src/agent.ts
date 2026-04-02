@@ -22,6 +22,17 @@ export class Agent {
     this.messages = [];
   }
 
+  updateConfig(config: Partial<OCCCAConfig>): void {
+    Object.assign(this.config, config);
+    this.client = new OpenAI({
+      apiKey: this.config.apiKey,
+      baseURL: this.config.baseUrl,
+    });
+    if (config.model) {
+      this.systemPrompt = getSystemPrompt(this.config.model);
+    }
+  }
+
   getMessageCount(): number {
     return this.messages.length;
   }
@@ -42,7 +53,6 @@ export class Agent {
     try {
       const summaryResponse = await this.client.chat.completions.create({
         model: this.config.model,
-        max_tokens: 1024,
         temperature: 0,
         messages: [
           { role: 'system', content: 'Summarize the following conversation concisely, preserving key decisions, file paths, code changes, and technical details. Be brief but complete.' },
@@ -74,7 +84,6 @@ export class Agent {
       try {
         const stream = await this.client.chat.completions.create({
           model: this.config.model,
-          max_tokens: this.config.maxTokens,
           temperature: this.config.temperature,
           messages: [
             { role: 'system', content: this.systemPrompt },

@@ -14,7 +14,6 @@ export interface OCCCAConfig {
   apiKey: string;
   baseUrl: string;
   model: string;
-  maxTokens: number;
   temperature: number;
 }
 

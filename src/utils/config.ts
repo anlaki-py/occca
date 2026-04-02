@@ -11,7 +11,6 @@ const DEFAULT_CONFIG: OCCCAConfig = {
   apiKey: 'sk-your-api-key-here',
   baseUrl: 'https://api.openai.com/v1',
   model: 'gpt-5',
-  maxTokens: 16384,
   temperature: 0,
 };
 
@@ -62,7 +61,6 @@ export function getConfig(): OCCCAConfig {
     apiKey: process.env.OPENAI_API_KEY || process.env.OCCCA_API_KEY || saved.apiKey || '',
     baseUrl: process.env.OPENAI_BASE_URL || process.env.OCCCA_BASE_URL || saved.baseUrl || 'https://api.openai.com/v1',
     model: process.env.OCCCA_MODEL || saved.model || 'gpt-5',
-    maxTokens: parseInt(process.env.OCCCA_MAX_TOKENS || '') || saved.maxTokens || 16384,
     temperature: parseFloat(process.env.OCCCA_TEMPERATURE ?? '') || (saved.temperature ?? 0),
   };
 }

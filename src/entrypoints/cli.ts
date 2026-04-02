@@ -38,7 +38,6 @@ program
   .option('-k, --api-key <key>', 'API key')
   .option('-u, --base-url <url>', 'API base URL')
   .option('-t, --temperature <temp>', 'Temperature', parseFloat)
-  .option('--max-tokens <tokens>', 'Max tokens per response', parseInt)
   .option('-p, --prompt <prompt>', 'Run a single prompt and exit (non-interactive)')
   .parse(process.argv);
 
@@ -58,7 +57,6 @@ async function main(): Promise<void> {
   if (opts.apiKey) config.apiKey = opts.apiKey;
   if (opts.baseUrl) config.baseUrl = opts.baseUrl;
   if (opts.temperature !== undefined) config.temperature = opts.temperature;
-  if (opts.maxTokens) config.maxTokens = opts.maxTokens;
 
   // Warn if still using placeholder key
   if (!config.apiKey || config.apiKey === 'sk-your-api-key-here') {
@@ -285,7 +283,7 @@ function askQuestion(prompt: string): Promise<string> {
   });
 }
 
-async function runConfigEditor(config: OCCCAConfig): Promise<void> {
+async function runConfigEditor(config: OCCCAConfig, agent: Agent): Promise<void> {
   const { c } = await import('../utils/theme.js');
 
   console.log('');
@@ -310,17 +308,9 @@ async function runConfigEditor(config: OCCCAConfig): Promise<void> {
   if (newUrl.trim()) config.baseUrl = newUrl.trim();
 
   // Model
-  console.log(c.inactive('  Current Model: ') + c.text(config.model));
-  const newModel = await askQuestion(c.brand('  Model: '));
+  console.log(c.inactive(' Current Model: ') + c.text(config.model));
+  const newModel = await askQuestion(c.brand(' Model: '));
   if (newModel.trim()) config.model = newModel.trim();
-
-  // Max Tokens
-  console.log(c.inactive('  Current Max Tokens: ') + c.text(String(config.maxTokens)));
-  const newTokens = await askQuestion(c.brand('  Max Tokens: '));
-  if (newTokens.trim()) {
-    const parsed = parseInt(newTokens.trim(), 10);
-    if (!isNaN(parsed) && parsed > 0) config.maxTokens = parsed;
-  }
 
   // Temperature
   console.log(c.inactive('  Current Temperature: ') + c.text(String(config.temperature)));
@@ -332,14 +322,14 @@ async function runConfigEditor(config: OCCCAConfig): Promise<void> {
 
   // Save
   saveFullConfig(config);
+  agent.updateConfig(config);
   console.log('');
   printSuccess(`Config saved to ${getConfigPath()}`);
   printDivider();
-  console.log(c.inactive('  Model:       ') + c.text(config.model));
-  console.log(c.inactive('  Endpoint:    ') + c.text(config.baseUrl));
-  console.log(c.inactive('  Max Tokens:  ') + c.text(String(config.maxTokens)));
-  console.log(c.inactive('  Temperature: ') + c.text(String(config.temperature)));
-  console.log(c.inactive('  API Key:     ') + c.text(config.apiKey ? '***' + config.apiKey.slice(-4) : 'NOT SET'));
+  console.log(c.inactive(' Model: ') + c.text(config.model));
+  console.log(c.inactive(' Endpoint: ') + c.text(config.baseUrl));
+  console.log(c.inactive(' Temperature: ') + c.text(String(config.temperature)));
+  console.log(c.inactive(' API Key: ') + c.text(config.apiKey ? '***' + config.apiKey.slice(-4) : 'NOT SET'));
   printDivider();
 }
 
@@ -389,7 +379,7 @@ async function handleCommand(
       return false;
 
     case '/config': {
-      await runConfigEditor(config);
+      await runConfigEditor(config, agent);
       return false;
     }
 
