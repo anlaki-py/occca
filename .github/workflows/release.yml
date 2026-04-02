@@ -16,7 +16,7 @@ jobs:
 
       - name: Get timestamp
         id: timestamp
-        run: echo "tag=backup-$(date +'%Y-%m-%d_%H-%M-%S')" >> $GITHUB_OUTPUT
+        run: echo "tag=$(date +'%Y-%m-%d_%H-%M-%S')" >> $GITHUB_OUTPUT
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
