@@ -129,9 +129,8 @@ async function runSinglePrompt(agent: Agent, prompt: string): Promise<void> {
     },
   };
 
-  for await (const _ of agent.run(prompt, callbacks)) {
-    // Agent loop iterations
-  }
+  // run() is a plain async function — just await it
+  await agent.run(prompt, callbacks);
 }
 
 // ─── Readline with Tab Completion + History ─────────────────────
@@ -161,12 +160,40 @@ function createReadline(): readline.Interface {
   return rl;
 }
 
+/**
+ * Prompt for a line of input using readline.
+ * Properly cleans up the 'close' handler after resolution
+ * to prevent listener leaks across REPL iterations.
+ *
+ * IMPORTANT (Windows fix): Before each question, explicitly force stdin
+ * into raw mode + flowing state. Readline's internal `this.paused` flag
+ * can desync from stdin's actual state after agent turns (tool calls,
+ * streaming, etc). When that happens, readline's own `resume()` inside
+ * `question()` is a no-op because it thinks stdin is already flowing —
+ * but stdin is actually stalled. Our explicit calls bypass that check.
+ *
+ * @param rl - The persistent readline interface
+ * @param prompt - The prompt string to display
+ * @returns The user's raw input string
+ */
 function question(rl: readline.Interface, prompt: string): Promise<string> {
   return new Promise<string>((resolve, reject) => {
+    // Force stdin into the correct state for readline input.
+    // This is the core fix for the "can't type after tool calls" bug.
+    if (process.stdin.isTTY) {
+      process.stdin.setRawMode(true);
+    }
+    process.stdin.resume();
+
+    // Handler for unexpected readline closure (e.g. Ctrl+D / EOF)
+    const onClose = () => reject(new Error('readline closed'));
+    rl.once('close', onClose);
+
     rl.question(prompt, (answer) => {
+      // Remove our close handler so it doesn't leak across iterations
+      rl.removeListener('close', onClose);
       resolve(answer);
     });
-    rl.once('close', () => reject(new Error('readline closed')));
   });
 }
 
@@ -181,6 +208,16 @@ async function runInteractive(agent: Agent, config: OCCCAConfig): Promise<void> 
   // Create single persistent readline instance for the entire session
   const rl = createReadline();
 
+  // KEEPALIVE: Prevent the Node.js event loop from draining if stdin's
+  // internal handle state gets disrupted (e.g. after tool calls on Windows).
+  // This interval keeps at least one active handle in the event loop.
+  const keepalive = setInterval(() => {}, 2_147_483_647);
+
+  // Ensure stdin keeps the event loop alive (belt-and-suspenders)
+  if (typeof process.stdin.ref === 'function') {
+    process.stdin.ref();
+  }
+
   try {
     while (true) {
       let input: string;
@@ -189,7 +226,7 @@ async function runInteractive(agent: Agent, config: OCCCAConfig): Promise<void> 
       } catch {
         console.log('');
         printInfo('Goodbye!');
-        process.exit(0);
+        break;
       }
 
       const trimmed = input.trim();
@@ -201,10 +238,7 @@ async function runInteractive(agent: Agent, config: OCCCAConfig): Promise<void> 
       // Handle slash commands — pass rl so interactive prompts can pause it
       if (trimmed.startsWith('/')) {
         const shouldExit = await handleCommand(trimmed, agent, config, rl);
-        if (shouldExit) {
-          rl.close();
-          process.exit(0);
-        }
+        if (shouldExit) break;
         continue;
       }
 
@@ -230,8 +264,11 @@ async function runInteractive(agent: Agent, config: OCCCAConfig): Promise<void> 
       }
     }
   } finally {
+    clearInterval(keepalive);
     rl.close();
   }
+
+  process.exit(0);
 }
 
 // ─── Agent Turn ─────────────────────────────────────────────────
@@ -290,9 +327,8 @@ async function runAgentTurn(agent: Agent, input: string): Promise<void> {
   };
 
   try {
-    for await (const _ of agent.run(input, callbacks, controller.signal)) {
-      // Agent loop iterations
-    }
+    // run() is a plain async function — just await it
+    await agent.run(input, callbacks, controller.signal);
   } finally {
     // Always clean up the Escape listener
     stopListening();

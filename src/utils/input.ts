@@ -13,7 +13,8 @@ export class EscapeCancelledError extends Error {
 
 /**
  * Prompt the user for input with Escape-to-cancel support.
- * Listens for raw Escape keypress (0x1b) alongside normal readline input.
+ * Creates a temporary readline for the prompt, listens for Escape via
+ * the 'keypress' event (which readline enables on stdin automatically).
  * @param prompt - The prompt string to display
  * @returns The user's trimmed answer
  * @throws EscapeCancelledError if the user presses Escape
@@ -26,7 +27,7 @@ export function askWithEscape(prompt: string): Promise<string> {
       terminal: true,
     });
 
-    // Listen for Escape key — readline emits 'keypress' events when terminal is true
+    // Escape detection via readline's own 'keypress' pipeline
     const onKeypress = (_char: string, key: readline.Key) => {
       if (key && key.name === 'escape') {
         cleanup();
@@ -47,7 +48,7 @@ export function askWithEscape(prompt: string): Promise<string> {
       resolve(answer.trim());
     });
 
-    // Also reject if stdin is closed unexpectedly
+    // Also clean up if stdin is closed unexpectedly
     rl.once('close', () => {
       process.stdin.removeListener('keypress', onKeypress);
     });
@@ -55,39 +56,40 @@ export function askWithEscape(prompt: string): Promise<string> {
 }
 
 /**
- * Set up a raw Escape key listener that calls a callback when pressed.
+ * Set up an Escape key listener that calls a callback when pressed.
  * Returns a cleanup function to remove the listener.
- * Used during streaming to cancel the agent's generation.
+ *
+ * CRITICAL DESIGN: This function MUST NOT touch process.stdin directly
+ * (no setRawMode, no resume/pause, no 'data' listeners). All of those
+ * interfere with readline's internal stream management on Windows and
+ * cause the event loop to drain, silently killing the process.
+ *
+ * Instead, we listen for 'keypress' events which readline's
+ * emitKeypressEvents() pipeline already emits on stdin. This works
+ * _with_ readline rather than against it.
+ *
  * @param onEscape - Callback invoked when Escape is pressed
  * @returns Cleanup function to stop listening
  */
 export function listenForEscape(onEscape: () => void): () => void {
-  const wasRaw = process.stdin.isRaw;
+  let cleaned = false;
 
-  // Enable raw mode to intercept individual keypresses
-  if (process.stdin.isTTY) {
-    process.stdin.setRawMode(true);
-  }
-  process.stdin.resume();
-
-  const onData = (data: Buffer) => {
-    // Escape key is byte 0x1b (27) — only trigger on bare Escape, not arrow keys
-    // Arrow keys send 0x1b followed by more bytes, so check for single byte
-    if (data.length === 1 && data[0] === 0x1b) {
+  // Use the 'keypress' event that readline has already set up on stdin.
+  // This avoids ANY direct manipulation of stdin's raw mode or flow state.
+  const onKeypress = (_ch: string | undefined, key: { name?: string } | undefined) => {
+    if (key && key.name === 'escape') {
       cleanup();
       onEscape();
     }
   };
 
   const cleanup = () => {
-    process.stdin.removeListener('data', onData);
-    // Restore previous raw mode state
-    if (process.stdin.isTTY) {
-      process.stdin.setRawMode(wasRaw ?? false);
-    }
+    if (cleaned) return;
+    cleaned = true;
+    process.stdin.removeListener('keypress', onKeypress);
   };
 
-  process.stdin.on('data', onData);
+  process.stdin.on('keypress', onKeypress);
 
   return cleanup;
 }

@@ -231,162 +231,197 @@ export class Agent {
     return !signal?.aborted;
   }
 
+  // ─── Main Run Loop ────────────────────────────────────────────
+
   /**
    * Run the agent loop: send user message, stream response, execute tools.
    * Automatically retries on rate limits (with key rotation) and transient errors.
+   * This is a plain async function (NOT a generator) — the previous async generator
+   * pattern caused silent process exits on Windows due to iterator finalization
+   * interfering with readline's stdin management.
    * @param userMessage - The user's input text
    * @param callbacks - Event callbacks for tokens, tools, errors, completion, notices
    * @param signal - Optional AbortSignal for cancelling mid-generation (e.g. Escape key)
    */
-  async *run(userMessage: string, callbacks: AgentCallbacks, signal?: AbortSignal): AsyncGenerator<void> {
+  async run(userMessage: string, callbacks: AgentCallbacks, signal?: AbortSignal): Promise<void> {
     this.messages.push({ role: 'user', content: userMessage });
 
-    let continueLoop = true;
+    // Outer safety net — nothing from inside can kill the process
+    try {
+      let continueLoop = true;
 
-    while (continueLoop) {
-      continueLoop = false;
+      while (continueLoop) {
+        continueLoop = false;
 
-      try {
-        const stream = await this.client.chat.completions.create({
-          model: this.config.model,
-          temperature: this.config.temperature,
-          messages: [
-            { role: 'system', content: this.systemPrompt },
-            ...this.messages,
-          ],
-          tools: getAllTools(),
-          tool_choice: 'auto',
-          stream: true,
-        }, {
-          // Pass abort signal to the HTTP request so it cancels cleanly
-          signal: signal as any,
-        });
+        try {
+          const stream = await this.client.chat.completions.create({
+            model: this.config.model,
+            temperature: this.config.temperature,
+            messages: [
+              { role: 'system', content: this.systemPrompt },
+              ...this.messages,
+            ],
+            tools: getAllTools(),
+            tool_choice: 'auto',
+            stream: true,
+          }, {
+            // Pass abort signal to the HTTP request so it cancels cleanly
+            signal: signal as any,
+          });
 
-        let assistantContent = '';
-        const toolCalls: Map<number, { id: string; name: string; arguments: string }> = new Map();
+          let assistantContent = '';
+          const toolCalls: Map<number, { id: string; name: string; arguments: string }> = new Map();
 
-        for await (const chunk of stream) {
-          const delta = chunk.choices[0]?.delta;
+          // Stream response chunks — collect text and tool calls
+          for await (const chunk of stream) {
+            const delta = chunk.choices[0]?.delta;
 
-          if (!delta) continue;
+            if (!delta) continue;
 
-          if (delta.content) {
-            assistantContent += delta.content;
-            callbacks.onToken(delta.content);
-          }
+            if (delta.content) {
+              assistantContent += delta.content;
+              callbacks.onToken(delta.content);
+            }
 
-          if (delta.tool_calls) {
-            for (const tc of delta.tool_calls) {
-              const index = tc.index;
-              if (!toolCalls.has(index)) {
-                toolCalls.set(index, { id: tc.id || '', name: tc.function?.name || '', arguments: '' });
+            if (delta.tool_calls) {
+              for (const tc of delta.tool_calls) {
+                const index = tc.index;
+                if (!toolCalls.has(index)) {
+                  toolCalls.set(index, { id: tc.id || '', name: tc.function?.name || '', arguments: '' });
+                }
+                const existing = toolCalls.get(index)!;
+                if (tc.id) existing.id = tc.id;
+                if (tc.function?.name) existing.name = tc.function.name;
+                if (tc.function?.arguments) existing.arguments += tc.function.arguments;
               }
-              const existing = toolCalls.get(index)!;
-              if (tc.id) existing.id = tc.id;
-              if (tc.function?.name) existing.name = tc.function.name;
-              if (tc.function?.arguments) existing.arguments += tc.function.arguments;
             }
           }
-        }
 
-        const assistantMessage: ChatCompletionMessageParam = {
-          role: 'assistant',
-          content: assistantContent || null,
-        };
+          // Build and save the assistant message
+          const assistantMessage: ChatCompletionMessageParam = {
+            role: 'assistant',
+            content: assistantContent || null,
+          };
 
-        if (toolCalls.size > 0) {
-          (assistantMessage as any).tool_calls = Array.from(toolCalls.values()).map(tc => ({
-            id: tc.id,
-            type: 'function' as const,
-            function: { name: tc.name, arguments: tc.arguments },
-          }));
-        }
+          if (toolCalls.size > 0) {
+            (assistantMessage as any).tool_calls = Array.from(toolCalls.values()).map(tc => ({
+              id: tc.id,
+              type: 'function' as const,
+              function: { name: tc.name, arguments: tc.arguments },
+            }));
+          }
 
-        this.messages.push(assistantMessage);
+          this.messages.push(assistantMessage);
 
-        if (toolCalls.size > 0) {
-          const toolResults: ChatCompletionMessageParam[] = [];
+          // Execute tool calls if any
+          if (toolCalls.size > 0) {
+            const toolResults: ChatCompletionMessageParam[] = [];
 
-          for (const [_, tc] of toolCalls) {
-            let args: Record<string, unknown> = {};
-            try {
-              args = JSON.parse(tc.arguments || '{}');
-            } catch {
-              args = {};
-            }
-
-            const tool = getTool(tc.name);
-            callbacks.onToolStart(tc.name, args);
-
-            let result: string;
-            if (tool) {
+            for (const [_, tc] of toolCalls) {
+              let args: Record<string, unknown> = {};
               try {
-                result = await tool.execute(args);
-              } catch (err: any) {
-                result = `Error executing ${tc.name}: ${err.message}`;
+                args = JSON.parse(tc.arguments || '{}');
+              } catch {
+                args = {};
               }
-            } else {
-              result = `Error: Unknown tool "${tc.name}"`;
+
+              const tool = getTool(tc.name);
+              callbacks.onToolStart(tc.name, args);
+
+              let result: string;
+              if (tool) {
+                try {
+                  result = await tool.execute(args);
+                } catch (err: any) {
+                  result = `Error executing ${tc.name}: ${err.message}`;
+                }
+              } else {
+                result = `Error: Unknown tool "${tc.name}"`;
+              }
+
+              callbacks.onToolEnd(tc.name, result);
+
+              toolResults.push({
+                role: 'tool',
+                tool_call_id: tc.id,
+                content: result,
+              } as any);
             }
 
-            callbacks.onToolEnd(tc.name, result);
+            this.messages.push(...toolResults);
 
-            toolResults.push({
-              role: 'tool',
-              tool_call_id: tc.id,
-              content: result,
-            } as any);
+            // Check if cancelled between tool rounds
+            if (signal?.aborted) {
+              this.safeComplete(callbacks);
+              return;
+            }
+
+            // Loop back for the follow-up response
+            continueLoop = true;
           }
-
-          this.messages.push(...toolResults);
-
-          // Check if cancelled between tool rounds
-          if (signal?.aborted) {
-            callbacks.onComplete();
+        } catch (err: any) {
+          // Don't report abort errors as failures — user intentionally cancelled
+          if (signal?.aborted || err.name === 'AbortError') {
+            this.safeComplete(callbacks);
             return;
           }
 
-          continueLoop = true;
-        }
+          // Rate limit — rotate key or wait and retry forever
+          if (this.isRateLimitError(err)) {
+            const shouldRetry = await this.handleRateLimit(callbacks, signal);
+            if (shouldRetry) {
+              continueLoop = true;
+              continue;
+            }
+            // User cancelled during wait
+            this.safeComplete(callbacks);
+            return;
+          }
 
-        yield;
-      } catch (err: any) {
-        // Don't report abort errors as failures — user intentionally cancelled
-        if (signal?.aborted || err.name === 'AbortError') {
-          callbacks.onComplete();
-          return;
-        }
+          // Non-retryable error — fail immediately
+          if (this.isNonRetryable(err)) {
+            callbacks.onError(err);
+            return;
+          }
 
-        // Rate limit — rotate key or wait and retry forever
-        if (this.isRateLimitError(err)) {
-          const shouldRetry = await this.handleRateLimit(callbacks, signal);
+          // Transient error — wait fixed duration and retry forever
+          const shouldRetry = await this.handleTransientError(err, callbacks, signal);
           if (shouldRetry) {
             continueLoop = true;
             continue;
           }
           // User cancelled during wait
-          callbacks.onComplete();
+          this.safeComplete(callbacks);
           return;
         }
+      }
 
-        // Non-retryable error — fail immediately
-        if (this.isNonRetryable(err)) {
-          callbacks.onError(err);
-          return;
-        }
-
-        // Transient error — wait fixed duration and retry forever
-        const shouldRetry = await this.handleTransientError(err, callbacks, signal);
-        if (shouldRetry) {
-          continueLoop = true;
-          continue;
-        }
-        // User cancelled during wait
-        callbacks.onComplete();
-        return;
+      // All iterations complete — signal done
+      this.safeComplete(callbacks);
+    } catch (outerErr: any) {
+      // Absolute last resort — something unexpected escaped all inner handling.
+      // Report it instead of crashing the process.
+      try {
+        callbacks.onError(outerErr instanceof Error ? outerErr : new Error(String(outerErr)));
+      } catch {
+        console.error('[OCCCA] Fatal agent error:', outerErr);
       }
     }
+  }
 
-    callbacks.onComplete();
+  /**
+   * Safely invoke onComplete — if the callback throws (e.g. from
+   * markdown rendering), log the error instead of crashing.
+   */
+  private safeComplete(callbacks: AgentCallbacks): void {
+    try {
+      callbacks.onComplete();
+    } catch (err: any) {
+      try {
+        callbacks.onError(err instanceof Error ? err : new Error(String(err)));
+      } catch {
+        console.error('[OCCCA] Error in onComplete callback:', err);
+      }
+    }
   }
 }
