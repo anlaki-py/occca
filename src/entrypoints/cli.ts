@@ -10,6 +10,14 @@ import { Agent } from '../agent.js';
 import { loadHistory, saveHistoryLine } from '../utils/history.js';
 import { PRODUCT_NAME, PRODUCT_VERSION, PRODUCT_DESCRIPTION } from '../constants/product.js';
 import {
+  loadModels,
+  setActiveModel,
+  addModel,
+  removeModel,
+  updateModel,
+  findModelByName,
+} from '../utils/models.js';
+import {
   printBanner,
   printConfig,
   printAssistantLabel,
@@ -27,6 +35,14 @@ import {
   showToolStart,
   showToolEnd,
 } from '../components/toolDisplay.js';
+import {
+  runModelPicker,
+  runModelCreator,
+  runModelEditor,
+  pickModelForAction,
+  printCurrentModelInfo,
+} from '../components/modelDisplay.js';
+import { listenForEscape, askWithEscape, EscapeCancelledError } from '../utils/input.js';
 
 // ─── CLI Argument Parsing ────────────────────────────────────────
 
@@ -155,52 +171,55 @@ async function runInteractive(agent: Agent, config: OCCCAConfig): Promise<void> 
 
   const promptStr = getUserPromptString();
 
-  // Keep process alive
-  process.stdin.setRawMode?.(false);
+  // Create single persistent readline instance for the entire session
+  const rl = createReadline();
 
-  while (true) {
-    const rl = createReadline();
-
-    let input: string;
-    try {
-      input = await question(rl, promptStr);
-    } catch {
-      console.log('');
-      printInfo('Goodbye!');
-      process.exit(0);
-    } finally {
-      rl.close();
-    }
-
-    const trimmed = input.trim();
-    if (!trimmed) continue;
-
-    // Save to persistent history
-    saveHistoryLine(trimmed);
-
-    // Handle slash commands
-    if (trimmed.startsWith('/')) {
-      const shouldExit = await handleCommand(trimmed, agent, config);
-      if (shouldExit) {
+  try {
+    while (true) {
+      let input: string;
+      try {
+        input = await question(rl, promptStr);
+      } catch {
+        console.log('');
+        printInfo('Goodbye!');
         process.exit(0);
       }
-      continue;
-    }
 
-    // Handle shell escape (! prefix)
-    if (trimmed.startsWith('!')) {
-      const { executeBash } = await import('../tools/BashTool/index.js');
-      const result = await executeBash({ command: trimmed.slice(1).trim() });
-      console.log(result);
-      continue;
-    }
+      const trimmed = input.trim();
+      if (!trimmed) continue;
 
-    // Run agent turn
-    try {
-      await runAgentTurn(agent, trimmed);
-    } catch (err: any) {
-      printError(formatApiError(err));
+      // Save to persistent history
+      saveHistoryLine(trimmed);
+
+      // Handle slash commands
+      if (trimmed.startsWith('/')) {
+        const shouldExit = await handleCommand(trimmed, agent, config);
+        if (shouldExit) {
+          rl.close();
+          process.exit(0);
+        }
+        continue;
+      }
+
+      // Handle shell escape (! prefix)
+      if (trimmed.startsWith('!')) {
+        const command = trimmed.slice(1).trim();
+        const { executeBash } = await import('../tools/BashTool/index.js');
+        const result = await executeBash({ command });
+        console.log(result);
+        agent.addShellCommand(command, result);
+        continue;
+      }
+
+      // Run agent turn
+      try {
+        await runAgentTurn(agent, trimmed);
+      } catch (err: any) {
+        printError(formatApiError(err));
+      }
     }
+  } finally {
+    rl.close();
   }
 }
 
@@ -209,6 +228,12 @@ async function runInteractive(agent: Agent, config: OCCCAConfig): Promise<void> 
 async function runAgentTurn(agent: Agent, input: string): Promise<void> {
   let hasStartedResponse = false;
   let fullResponse = '';
+
+  // Create an AbortController so the Escape key can cancel the stream
+  const controller = new AbortController();
+  const stopListening = listenForEscape(() => {
+    controller.abort();
+  });
 
   const callbacks = {
     onToken: (token: string) => {
@@ -241,13 +266,22 @@ async function runAgentTurn(agent: Agent, input: string): Promise<void> {
         fullResponse = '';
       }
       if (hasStartedResponse) {
+        // Show cancellation indicator if aborted
+        if (controller.signal.aborted) {
+          printInfo('Generation cancelled.');
+        }
         finishAssistantMessage();
       }
     },
   };
 
-  for await (const _ of agent.run(input, callbacks)) {
-    // Agent loop iterations
+  try {
+    for await (const _ of agent.run(input, callbacks, controller.signal)) {
+      // Agent loop iterations
+    }
+  } finally {
+    // Always clean up the Escape listener
+    stopListening();
   }
 }
 
@@ -273,64 +307,216 @@ function formatApiError(error: Error): string {
 
 // ─── Config Editor ──────────────────────────────────────────────
 
-function askQuestion(prompt: string): Promise<string> {
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: true });
-  return new Promise((resolve) => {
-    rl.question(prompt, (answer) => {
-      rl.close();
-      resolve(answer);
+/**
+ * Interactive config editor — edits the currently active model profile.
+ * Supports Escape to cancel midway through editing.
+ * @param config - Current runtime config (mutated in place)
+ * @param agent - Agent instance to refresh after config change
+ */
+async function runConfigEditor(config: OCCCAConfig, agent: Agent): Promise<void> {
+  try {
+    const { c } = await import('../utils/theme.js');
+    const modelsConfig = loadModels();
+    const activeProfile = modelsConfig.models.find(m => m.id === modelsConfig.activeModelId);
+
+    if (!activeProfile) {
+      printError('No active model profile found.');
+      return;
+    }
+
+    // Edit the active profile interactively
+    const updated = await runModelEditor({ ...activeProfile });
+
+    // Persist the changes to the profile
+    updateModel(updated.id, {
+      name: updated.name,
+      apiKey: updated.apiKey,
+      baseUrl: updated.baseUrl,
+      model: updated.model,
+      temperature: updated.temperature,
     });
-  });
+
+    // Update runtime config and agent
+    config.apiKey = updated.apiKey;
+    config.baseUrl = updated.baseUrl;
+    config.model = updated.model;
+    config.temperature = updated.temperature;
+    agent.updateConfig(config);
+
+    console.log('');
+    printSuccess(`Profile "${updated.name}" saved.`);
+    printDivider();
+    console.log(c.inactive('  Model:    ') + c.text(config.model));
+    console.log(c.inactive('  Endpoint: ') + c.text(config.baseUrl));
+    console.log(c.inactive('  Temp:     ') + c.text(String(config.temperature)));
+    console.log(c.inactive('  API Key:  ') + c.text(config.apiKey && config.apiKey !== 'sk-your-api-key-here' ? '***' + config.apiKey.slice(-4) : 'NOT SET'));
+    printDivider();
+  } catch (err) {
+    if (err instanceof EscapeCancelledError) {
+      printInfo('Config editing cancelled.');
+      return;
+    }
+    throw err;
+  }
 }
 
-async function runConfigEditor(config: OCCCAConfig, agent: Agent): Promise<void> {
-  const { c } = await import('../utils/theme.js');
 
-  console.log('');
-  console.log(c.brandBold('  Configuration Editor'));
-  console.log(c.inactive(`  Config file: ${getConfigPath()}`));
-  printDivider();
-  console.log('');
-  console.log(c.inactive('  Press Enter to keep current value. Type a new value to change it.'));
-  console.log('');
 
-  // API Key
-  const maskedKey = config.apiKey
-    ? (config.apiKey === 'sk-your-api-key-here' ? c.warning('(not set)') : '***' + config.apiKey.slice(-4))
-    : c.error('(empty)');
-  console.log(c.inactive('  Current API Key: ') + maskedKey);
-  const newKey = await askQuestion(c.brand('  API Key: '));
-  if (newKey.trim()) config.apiKey = newKey.trim();
+// ─── Model Subcommands ──────────────────────────────────────────
 
-  // Base URL
-  console.log(c.inactive('  Current Endpoint: ') + c.text(config.baseUrl));
-  const newUrl = await askQuestion(c.brand('  Endpoint: '));
-  if (newUrl.trim()) config.baseUrl = newUrl.trim();
+/**
+ * Handle /model and its subcommands (add, edit, remove, or switch).
+ * No args → interactive picker. With name → quick-switch by profile name.
+ * @param arg - Subcommand or model profile name
+ * @param config - Runtime config (mutated on switch)
+ * @param agent - Agent instance to refresh
+ */
+async function handleModelCommand(
+  arg: string,
+  config: OCCCAConfig,
+  agent: Agent,
+): Promise<void> {
+  const subcommand = arg.split(/\s+/)[0]?.toLowerCase() || '';
 
-  // Model
-  console.log(c.inactive(' Current Model: ') + c.text(config.model));
-  const newModel = await askQuestion(c.brand(' Model: '));
-  if (newModel.trim()) config.model = newModel.trim();
+  try {
+    switch (subcommand) {
+      case 'add': {
+        // Create a new model profile interactively
+        const result = await runModelCreator();
+        if (!result) {
+          printInfo('Model creation cancelled.');
+          return;
+        }
+        const profile = addModel(result);
+        printSuccess(`Model "${profile.name}" created.`);
 
-  // Temperature
-  console.log(c.inactive('  Current Temperature: ') + c.text(String(config.temperature)));
-  const newTemp = await askQuestion(c.brand('  Temperature: '));
-  if (newTemp.trim()) {
-    const parsed = parseFloat(newTemp.trim());
-    if (!isNaN(parsed) && parsed >= 0 && parsed <= 2) config.temperature = parsed;
+        // Ask if user wants to switch to it
+        const answer = await askWithEscape('  Switch to this model now? (y/N): ');
+        if (answer.toLowerCase() === 'y') {
+          setActiveModel(profile.id);
+          applyActiveModel(config, agent);
+          printSuccess(`Switched to "${profile.name}".`);
+        }
+        return;
+      }
+
+      case 'edit': {
+        // Pick a model and edit it
+        const modelsConfig = loadModels();
+        const targetId = await pickModelForAction(modelsConfig.models, 'edit');
+        if (!targetId) {
+          printInfo('Edit cancelled.');
+          return;
+        }
+        const target = modelsConfig.models.find(m => m.id === targetId);
+        if (!target) return;
+
+        const updated = await runModelEditor({ ...target });
+        updateModel(updated.id, {
+          name: updated.name,
+          apiKey: updated.apiKey,
+          baseUrl: updated.baseUrl,
+          model: updated.model,
+          temperature: updated.temperature,
+        });
+        printSuccess(`Model "${updated.name}" updated.`);
+
+        // If the edited model is the active one, refresh the agent
+        if (targetId === modelsConfig.activeModelId) {
+          applyActiveModel(config, agent);
+        }
+        return;
+      }
+
+      case 'remove':
+      case 'rm':
+      case 'delete': {
+        // Pick a model and remove it
+        const modelsConfig = loadModels();
+        if (modelsConfig.models.length <= 1) {
+          printWarning('Cannot remove the last model profile.');
+          return;
+        }
+        const targetId = await pickModelForAction(modelsConfig.models, 'remove');
+        if (!targetId) {
+          printInfo('Removal cancelled.');
+          return;
+        }
+        const target = modelsConfig.models.find(m => m.id === targetId);
+        const wasActive = targetId === modelsConfig.activeModelId;
+        const removed = removeModel(targetId);
+        if (removed) {
+          printSuccess(`Model "${target?.name}" removed.`);
+          // If we deleted the active model, refresh to the new active
+          if (wasActive) {
+            applyActiveModel(config, agent);
+            const newActive = loadModels().models.find(m => m.id === loadModels().activeModelId);
+            printInfo(`Switched to "${newActive?.name}".`);
+          }
+        } else {
+          printError('Failed to remove model.');
+        }
+        return;
+      }
+
+      case '': {
+        // No argument — show interactive picker
+        const modelsConfig = loadModels();
+        const activeProfile = modelsConfig.models.find(m => m.id === modelsConfig.activeModelId);
+        if (activeProfile) {
+          printCurrentModelInfo(activeProfile);
+        }
+
+        const selectedId = await runModelPicker(modelsConfig.models, modelsConfig.activeModelId);
+        if (!selectedId) {
+          printInfo('No change.');
+          return;
+        }
+        if (selectedId === modelsConfig.activeModelId) {
+          printInfo('Already using that model.');
+          return;
+        }
+        setActiveModel(selectedId);
+        applyActiveModel(config, agent);
+        const selected = loadModels().models.find(m => m.id === selectedId);
+        printSuccess(`Switched to "${selected?.name}" (${selected?.model}).`);
+        return;
+      }
+
+      default: {
+        // Quick-switch by profile name
+        const profile = findModelByName(arg);
+        if (profile) {
+          setActiveModel(profile.id);
+          applyActiveModel(config, agent);
+          printSuccess(`Switched to "${profile.name}" (${profile.model}).`);
+        } else {
+          printWarning(`No model profile named "${arg}". Use /model to see available models.`);
+        }
+        return;
+      }
+    }
+  } catch (err) {
+    if (err instanceof EscapeCancelledError) {
+      printInfo('Cancelled.');
+      return;
+    }
+    throw err;
   }
+}
 
-  // Save
-  saveFullConfig(config);
+/**
+ * Refresh the runtime config and agent from the current active model profile.
+ * @param config - Runtime config to update in place
+ * @param agent - Agent to reinitialize with new config
+ */
+function applyActiveModel(config: OCCCAConfig, agent: Agent): void {
+  const fresh = getConfig();
+  config.apiKey = fresh.apiKey;
+  config.baseUrl = fresh.baseUrl;
+  config.model = fresh.model;
+  config.temperature = fresh.temperature;
   agent.updateConfig(config);
-  console.log('');
-  printSuccess(`Config saved to ${getConfigPath()}`);
-  printDivider();
-  console.log(c.inactive(' Model: ') + c.text(config.model));
-  console.log(c.inactive(' Endpoint: ') + c.text(config.baseUrl));
-  console.log(c.inactive(' Temperature: ') + c.text(String(config.temperature)));
-  console.log(c.inactive(' API Key: ') + c.text(config.apiKey ? '***' + config.apiKey.slice(-4) : 'NOT SET'));
-  printDivider();
 }
 
 // ─── Slash Commands ─────────────────────────────────────────────
@@ -368,15 +554,10 @@ async function handleCommand(
       return false;
     }
 
-    case '/model':
-      if (arg) {
-        config.model = arg;
-        printSuccess(`Model switched to: ${arg}`);
-      } else {
-        printInfo(`Current model: ${config.model}`);
-        console.log('  Usage: /model <model-name>');
-      }
+    case '/model': {
+      await handleModelCommand(arg, config, agent);
       return false;
+    }
 
     case '/config': {
       await runConfigEditor(config, agent);

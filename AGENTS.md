@@ -1,7 +1,8 @@
 # Adhere strictly to these codebase structure rules:
     1. STRUCTURE: Split code logically and never write godfiles.
     2. MODULARITY: Enforce the Single Responsibility Principle. Extract types, constants, and helper functions into separate files.
-
+    3. Always create tests for new features and run tests after u done some tasks.
+    
 # Code Documentation Protocol
     All code must be commented inline. Comments explain the *what* and *why*, not the obvious.
     

@@ -94,18 +94,22 @@ export function printHelp(): void {
   console.log(c.subtle('  ' + '─'.repeat(50)));
   console.log('');
   const cmds = [
-    ['/help',    'Show this help message'],
-    ['/config',  'Edit configuration'],
-    ['/clear',   'Clear conversation history'],
-    ['/new',     'Clear history and start fresh session'],
-    ['/compact', 'Compact conversation to save context'],
-    ['/model',   'Show or switch model'],
-    ['/cost',    'Show current session info'],
-    ['/exit',    'Exit OCCCA'],
-    ['! <cmd>',  'Run a shell command inline'],
+    ['/help',         'Show this help message'],
+    ['/config',       'Edit active model configuration'],
+    ['/clear',        'Clear conversation history'],
+    ['/new',          'Clear history and start fresh session'],
+    ['/compact',      'Compact conversation to save context'],
+    ['/model',        'List models and switch interactively'],
+    ['/model add',    'Create a new model profile'],
+    ['/model edit',   'Edit an existing model profile'],
+    ['/model remove', 'Remove a model profile'],
+    ['/model <name>', 'Quick-switch by profile name'],
+    ['/cost',         'Show current session info'],
+    ['/exit',         'Exit OCCCA'],
+    ['! <cmd>',       'Run a shell command inline'],
   ];
   for (const [cmd, desc] of cmds) {
-    console.log(c.brand(`  ${cmd!.padEnd(12)}`) + c.inactive(desc!));
+    console.log(c.brand(`  ${cmd!.padEnd(16)}`) + c.inactive(desc!));
   }
   console.log('');
   console.log(chalk.bold.white('  Environment Variables'));

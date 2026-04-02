@@ -1,66 +1,76 @@
-import fs from 'fs';
+// Config utility — derives runtime OCCCAConfig from the active model profile
+// Env vars still take precedence over saved values
+
 import path from 'path';
 import os from 'os';
 import type { OCCCAConfig } from '../types/index.js';
+import { getActiveModel, loadModels, saveModels, getModelsConfigPath } from './models.js';
 
 const CONFIG_DIR = path.join(os.homedir(), '.occca');
-const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
 
-// Default config created on first run
-const DEFAULT_CONFIG: OCCCAConfig = {
-  apiKey: 'sk-your-api-key-here',
-  baseUrl: 'https://api.openai.com/v1',
-  model: 'gpt-5',
-  temperature: 0,
-};
-
-function ensureConfigDir(): void {
-  if (!fs.existsSync(CONFIG_DIR)) {
-    fs.mkdirSync(CONFIG_DIR, { recursive: true });
-  }
+/**
+ * Get the config directory path.
+ * @returns Absolute path to ~/.occca
+ */
+export function getConfigDir(): string {
+  return CONFIG_DIR;
 }
 
-/** Create default config file if it doesn't exist */
-export function ensureDefaultConfig(): boolean {
-  ensureConfigDir();
-  if (!fs.existsSync(CONFIG_FILE)) {
-    fs.writeFileSync(CONFIG_FILE, JSON.stringify(DEFAULT_CONFIG, null, 2));
-    return true; // first run
-  }
-  return false;
-}
-
+/**
+ * Get the path to the config file (now models.json).
+ * @returns Absolute path to the models config file
+ */
 export function getConfigPath(): string {
-  return CONFIG_FILE;
+  return getModelsConfigPath();
 }
 
-export function loadConfig(): Partial<OCCCAConfig> {
-  try {
-    if (fs.existsSync(CONFIG_FILE)) {
-      return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf-8'));
-    }
-  } catch { /* ignore */ }
-  return {};
-}
-
-export function saveConfig(config: Partial<OCCCAConfig>): void {
-  ensureConfigDir();
-  const existing = loadConfig();
-  fs.writeFileSync(CONFIG_FILE, JSON.stringify({ ...existing, ...config }, null, 2));
-}
-
-export function saveFullConfig(config: OCCCAConfig): void {
-  ensureConfigDir();
-  fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
-}
-
+/**
+ * Build the runtime OCCCAConfig from the active model profile.
+ * Environment variables override saved values for backwards compatibility.
+ * @returns The resolved OCCCAConfig
+ */
 export function getConfig(): OCCCAConfig {
-  ensureDefaultConfig();
-  const saved = loadConfig();
+  const activeProfile = getActiveModel();
+
   return {
-    apiKey: process.env.OPENAI_API_KEY || process.env.OCCCA_API_KEY || saved.apiKey || '',
-    baseUrl: process.env.OPENAI_BASE_URL || process.env.OCCCA_BASE_URL || saved.baseUrl || 'https://api.openai.com/v1',
-    model: process.env.OCCCA_MODEL || saved.model || 'gpt-5',
-    temperature: parseFloat(process.env.OCCCA_TEMPERATURE ?? '') || (saved.temperature ?? 0),
+    apiKey: process.env.OPENAI_API_KEY || process.env.OCCCA_API_KEY || activeProfile.apiKey,
+    baseUrl: process.env.OPENAI_BASE_URL || process.env.OCCCA_BASE_URL || activeProfile.baseUrl,
+    model: process.env.OCCCA_MODEL || activeProfile.model,
+    temperature: parseFloat(process.env.OCCCA_TEMPERATURE ?? '') || activeProfile.temperature,
   };
+}
+
+/**
+ * Save a full config by updating the active model profile.
+ * Used by the config editor for backward compatibility.
+ * @param config - The OCCCAConfig to persist onto the active profile
+ */
+export function saveFullConfig(config: OCCCAConfig): void {
+  const modelsConfig = loadModels();
+  const active = modelsConfig.models.find(m => m.id === modelsConfig.activeModelId);
+
+  if (active) {
+    active.apiKey = config.apiKey;
+    active.baseUrl = config.baseUrl;
+    active.model = config.model;
+    active.temperature = config.temperature;
+    saveModels(modelsConfig);
+  }
+}
+
+/**
+ * Partially update the active model profile.
+ * @param config - Partial fields to merge
+ */
+export function saveConfig(config: Partial<OCCCAConfig>): void {
+  const modelsConfig = loadModels();
+  const active = modelsConfig.models.find(m => m.id === modelsConfig.activeModelId);
+
+  if (active) {
+    if (config.apiKey !== undefined) active.apiKey = config.apiKey;
+    if (config.baseUrl !== undefined) active.baseUrl = config.baseUrl;
+    if (config.model !== undefined) active.model = config.model;
+    if (config.temperature !== undefined) active.temperature = config.temperature;
+    saveModels(modelsConfig);
+  }
 }

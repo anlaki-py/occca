@@ -41,6 +41,19 @@ export class Agent {
     this.messages = [];
   }
 
+  /**
+   * Add a shell command execution to the message history.
+   * This allows the model to see commands the user ran via ! escape.
+   * @param command - The shell command that was executed
+   * @param output - The output from the command
+   */
+  addShellCommand(command: string, output: string): void {
+    this.messages.push(
+      { role: 'user', content: `[Shell command executed]: ${command}` },
+      { role: 'assistant', content: `[Output]:\n${output}` }
+    );
+  }
+
   /** Compact: summarize old messages to reduce context */
   async compact(): Promise<string> {
     if (this.messages.length < 4) {
@@ -73,7 +86,13 @@ export class Agent {
     }
   }
 
-  async *run(userMessage: string, callbacks: AgentCallbacks): AsyncGenerator<void> {
+  /**
+   * Run the agent loop: send user message, stream response, execute tools.
+   * @param userMessage - The user's input text
+   * @param callbacks - Event callbacks for tokens, tools, errors, completion
+   * @param signal - Optional AbortSignal for cancelling mid-generation (e.g. Escape key)
+   */
+  async *run(userMessage: string, callbacks: AgentCallbacks, signal?: AbortSignal): AsyncGenerator<void> {
     this.messages.push({ role: 'user', content: userMessage });
 
     let continueLoop = true;
@@ -92,6 +111,9 @@ export class Agent {
           tools: getAllTools(),
           tool_choice: 'auto',
           stream: true,
+        }, {
+          // Pass abort signal to the HTTP request so it cancels cleanly
+          signal: signal as any,
         });
 
         let assistantContent = '';
@@ -171,11 +193,23 @@ export class Agent {
           }
 
           this.messages.push(...toolResults);
+
+          // Check if cancelled between tool rounds
+          if (signal?.aborted) {
+            callbacks.onComplete();
+            return;
+          }
+
           continueLoop = true;
         }
 
         yield;
       } catch (err: any) {
+        // Don't report abort errors as failures — user intentionally cancelled
+        if (signal?.aborted || err.name === 'AbortError') {
+          callbacks.onComplete();
+          return;
+        }
         callbacks.onError(err);
         return;
       }
