@@ -4,7 +4,7 @@
 
 import readline from 'readline';
 import { program } from 'commander';
-import { getConfig, saveFullConfig, getConfigPath } from '../utils/config.js';
+import { getConfig, getActiveApiKeys, saveFullConfig, getConfigPath } from '../utils/config.js';
 import type { OCCCAConfig } from '../types/index.js';
 import { Agent } from '../agent.js';
 import { loadHistory, saveHistoryLine } from '../utils/history.js';
@@ -29,6 +29,7 @@ import {
   printHelp,
   printWarning,
   printDivider,
+  printNotice,
   getUserPromptString,
 } from '../components/display.js';
 import {
@@ -87,7 +88,10 @@ async function main(): Promise<void> {
     console.log('');
   }
 
-  const agent = new Agent(config);
+  // Build the key pool — CLI flag overrides the profile keys
+  const apiKeys = opts.apiKey ? [opts.apiKey] : getActiveApiKeys();
+
+  const agent = new Agent(config, apiKeys);
 
   // Non-interactive mode
   if (opts.prompt) {
@@ -119,6 +123,9 @@ async function runSinglePrompt(agent: Agent, prompt: string): Promise<void> {
       if (fullResponse.trim()) {
         printMarkdown(fullResponse);
       }
+    },
+    onNotice: (message: string) => {
+      printNotice(message);
     },
   };
 
@@ -273,6 +280,9 @@ async function runAgentTurn(agent: Agent, input: string): Promise<void> {
         finishAssistantMessage();
       }
     },
+    onNotice: (message: string) => {
+      printNotice(message);
+    },
   };
 
   try {
@@ -330,18 +340,18 @@ async function runConfigEditor(config: OCCCAConfig, agent: Agent): Promise<void>
     // Persist the changes to the profile
     updateModel(updated.id, {
       name: updated.name,
-      apiKey: updated.apiKey,
+      apiKeys: updated.apiKeys,
       baseUrl: updated.baseUrl,
       model: updated.model,
       temperature: updated.temperature,
     });
 
-    // Update runtime config and agent
-    config.apiKey = updated.apiKey;
+    // Update runtime config and agent with the new key pool
+    config.apiKey = updated.apiKeys[0] || '';
     config.baseUrl = updated.baseUrl;
     config.model = updated.model;
     config.temperature = updated.temperature;
-    agent.updateConfig(config);
+    agent.updateConfig(config, updated.apiKeys);
 
     console.log('');
     printSuccess(`Profile "${updated.name}" saved.`);
@@ -414,7 +424,7 @@ async function handleModelCommand(
         const updated = await runModelEditor({ ...target });
         updateModel(updated.id, {
           name: updated.name,
-          apiKey: updated.apiKey,
+          apiKeys: updated.apiKeys,
           baseUrl: updated.baseUrl,
           model: updated.model,
           temperature: updated.temperature,
@@ -516,7 +526,8 @@ function applyActiveModel(config: OCCCAConfig, agent: Agent): void {
   config.baseUrl = fresh.baseUrl;
   config.model = fresh.model;
   config.temperature = fresh.temperature;
-  agent.updateConfig(config);
+  // Refresh both config and key pool
+  agent.updateConfig(config, getActiveApiKeys());
 }
 
 // ─── Slash Commands ─────────────────────────────────────────────

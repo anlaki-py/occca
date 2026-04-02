@@ -15,10 +15,13 @@ import { askWithEscape as ask } from '../utils/input.js';
  * @param active - The currently active model profile
  */
 export function printCurrentModelInfo(active: ModelProfile): void {
-  // Masked API key for security
-  const maskedKey = active.apiKey && active.apiKey !== 'sk-your-api-key-here'
-    ? '***' + active.apiKey.slice(-4)
-    : c.warning('not set');
+  // Key count display
+  const keyCount = active.apiKeys.length;
+  const keyDisplay = keyCount === 1
+    ? (active.apiKeys[0] !== 'sk-your-api-key-here'
+        ? '***' + active.apiKeys[0]!.slice(-4)
+        : c.warning('not set'))
+    : c.text(`${keyCount} keys configured`);
 
   console.log('');
   console.log(c.brandBold('  Current Model'));
@@ -26,7 +29,7 @@ export function printCurrentModelInfo(active: ModelProfile): void {
   console.log(c.inactive('  Name:     ') + c.text(active.name));
   console.log(c.inactive('  Model:    ') + c.text(active.model));
   console.log(c.inactive('  Endpoint: ') + c.text(active.baseUrl));
-  console.log(c.inactive('  API Key:  ') + maskedKey);
+  console.log(c.inactive('  API Keys: ') + keyDisplay);
   console.log(c.inactive('  Temp:     ') + c.text(String(active.temperature)));
   printDivider();
 
@@ -225,8 +228,12 @@ export async function runModelCreator(): Promise<Omit<ModelProfile, 'id'> | null
   console.log(c.inactive('  Default: gpt-5'));
   const model = await ask(c.brand('  Model name: '));
 
-  // API key
-  const apiKey = await ask(c.brand('  API Key: '));
+  // API keys — support comma-separated for multiple keys
+  console.log(c.inactive('  Tip: Enter multiple keys separated by commas for automatic rotation.'));
+  const apiKeyInput = await ask(c.brand('  API Key(s): '));
+  const apiKeys = apiKeyInput
+    ? apiKeyInput.split(',').map(k => k.trim()).filter(Boolean)
+    : ['sk-your-api-key-here'];
 
   // Temperature
   console.log(c.inactive('  Default: 0 (range 0-2)'));
@@ -241,7 +248,7 @@ export async function runModelCreator(): Promise<Omit<ModelProfile, 'id'> | null
 
   return {
     name,
-    apiKey: apiKey || 'sk-your-api-key-here',
+    apiKeys,
     baseUrl: baseUrl || 'https://api.openai.com/v1',
     model: model || 'gpt-5',
     temperature,
@@ -278,13 +285,22 @@ export async function runModelEditor(profile: ModelProfile): Promise<ModelProfil
   const newModel = await ask(c.brand('  Model: '));
   if (newModel) profile.model = newModel;
 
-  // API key — show masked
-  const maskedKey = profile.apiKey && profile.apiKey !== 'sk-your-api-key-here'
-    ? '***' + profile.apiKey.slice(-4)
-    : c.warning('not set');
-  console.log(c.inactive('  Current API Key: ') + maskedKey);
-  const newKey = await ask(c.brand('  API Key: '));
-  if (newKey) profile.apiKey = newKey;
+  // API keys — show count and masked values
+  const keyCount = profile.apiKeys.length;
+  if (keyCount === 1) {
+    const maskedKey = profile.apiKeys[0] !== 'sk-your-api-key-here'
+      ? '***' + profile.apiKeys[0]!.slice(-4)
+      : c.warning('not set');
+    console.log(c.inactive('  Current API Key: ') + maskedKey);
+  } else {
+    const maskedKeys = profile.apiKeys.map(k => '***' + k.slice(-4)).join(', ');
+    console.log(c.inactive(`  Current API Keys (${keyCount}): `) + maskedKeys);
+  }
+  console.log(c.inactive('  Tip: Enter multiple keys separated by commas for automatic rotation.'));
+  const newKeyInput = await ask(c.brand('  API Key(s): '));
+  if (newKeyInput) {
+    profile.apiKeys = newKeyInput.split(',').map(k => k.trim()).filter(Boolean);
+  }
 
   // Temperature
   console.log(c.inactive('  Current temperature: ') + c.text(String(profile.temperature)));

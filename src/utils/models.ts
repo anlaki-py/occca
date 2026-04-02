@@ -16,7 +16,7 @@ const LEGACY_CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
 const DEFAULT_PROFILE: ModelProfile = {
   id: 'default',
   name: 'OpenAI',
-  apiKey: 'sk-your-api-key-here',
+  apiKeys: ['sk-your-api-key-here'],
   baseUrl: 'https://api.openai.com/v1',
   model: 'gpt-5',
   temperature: 0,
@@ -56,8 +56,18 @@ export function loadModels(): ModelsConfig {
   // Case 1: models.json already exists
   if (fs.existsSync(MODELS_FILE)) {
     try {
-      const raw = JSON.parse(fs.readFileSync(MODELS_FILE, 'utf-8'));
-      return raw as ModelsConfig;
+      const raw = JSON.parse(fs.readFileSync(MODELS_FILE, 'utf-8')) as ModelsConfig;
+      // Backwards-compat: migrate old apiKey (string) → apiKeys (array)
+      let migrated = false;
+      for (const model of raw.models) {
+        if (!model.apiKeys && (model as any).apiKey) {
+          model.apiKeys = [(model as any).apiKey];
+          delete (model as any).apiKey;
+          migrated = true;
+        }
+      }
+      if (migrated) saveModels(raw);
+      return raw;
     } catch {
       // Corrupted file — fall through to create default
     }
@@ -105,7 +115,7 @@ export function migrateFromLegacy(legacy: Partial<OCCCAConfig>): ModelsConfig {
   const profile: ModelProfile = {
     id: 'migrated',
     name: 'Migrated',
-    apiKey: legacy.apiKey || DEFAULT_PROFILE.apiKey,
+    apiKeys: legacy.apiKey ? [legacy.apiKey] : [...DEFAULT_PROFILE.apiKeys],
     baseUrl: legacy.baseUrl || DEFAULT_PROFILE.baseUrl,
     model: legacy.model || DEFAULT_PROFILE.model,
     temperature: legacy.temperature ?? DEFAULT_PROFILE.temperature,

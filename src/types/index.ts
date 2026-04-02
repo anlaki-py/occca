@@ -22,7 +22,7 @@ export interface OCCCAConfig {
 export interface ModelProfile {
   id: string;
   name: string;         // user-facing display name (e.g. "GPT-5", "Local Ollama")
-  apiKey: string;
+  apiKeys: string[];    // one or more API keys (rotation pool)
   baseUrl: string;
   model: string;        // the actual model identifier sent to the API
   temperature: number;
@@ -40,4 +40,6 @@ export interface AgentCallbacks {
   onToolEnd: (name: string, result: string) => void;
   onError: (error: Error) => void;
   onComplete: () => void;
+  /** Fired for automatic actions like key rotation or retry countdowns */
+  onNotice: (message: string) => void;
 }

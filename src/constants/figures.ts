@@ -7,6 +7,7 @@ export const CHECKMARK = '✓';
 export const CROSS = '✗';
 export const INFO_MARK = 'ℹ';
 export const WARN_MARK = '⚠';
+export const ROTATE_MARK = '⟳';
 
 // Spinner frames (braille pattern dots)
 export const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];

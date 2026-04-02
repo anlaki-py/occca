@@ -1,31 +1,51 @@
 // Agent -- orchestrates model interactions and tool execution
+// Integrates KeyRotator for automatic API key rotation on rate limits
 
 import OpenAI from 'openai';
 import type { OCCCAConfig, AgentCallbacks } from './types/index.js';
 import { getSystemPrompt } from './constants/prompts.js';
 import { getAllTools, getTool } from './tools/registry.js';
+import { KeyRotator } from './utils/keyRotator.js';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions.js';
+
+/** Fixed delay (ms) between retries for both rate-limit waits and transient errors */
+const RETRY_DELAY_MS = 15_000;
 
 export class Agent {
   private client: OpenAI;
   private config: OCCCAConfig;
   private messages: ChatCompletionMessageParam[] = [];
   private systemPrompt: string;
+  private keyRotator: KeyRotator;
 
-  constructor(config: OCCCAConfig) {
+  /**
+   * @param config - Runtime configuration (apiKey, baseUrl, model, temperature)
+   * @param apiKeys - Full pool of API keys for rotation (defaults to [config.apiKey])
+   */
+  constructor(config: OCCCAConfig, apiKeys?: string[]) {
     this.config = config;
+    this.keyRotator = new KeyRotator(apiKeys || [config.apiKey]);
     this.client = new OpenAI({
-      apiKey: config.apiKey,
+      apiKey: this.keyRotator.getCurrentKey(),
       baseURL: config.baseUrl,
     });
     this.systemPrompt = getSystemPrompt(config.model);
     this.messages = [];
   }
 
-  updateConfig(config: Partial<OCCCAConfig>): void {
+  /**
+   * Update runtime config and optionally refresh the key pool.
+   * Recreates the OpenAI client with the new settings.
+   * @param config - Partial config overrides
+   * @param apiKeys - Optional new key pool for rotation
+   */
+  updateConfig(config: Partial<OCCCAConfig>, apiKeys?: string[]): void {
     Object.assign(this.config, config);
+    if (apiKeys) {
+      this.keyRotator.updateKeys(apiKeys);
+    }
     this.client = new OpenAI({
-      apiKey: this.config.apiKey,
+      apiKey: this.keyRotator.getCurrentKey(),
       baseURL: this.config.baseUrl,
     });
     if (config.model) {
@@ -86,10 +106,136 @@ export class Agent {
     }
   }
 
+  // ─── Error Classification ──────────────────────────────────────
+
+  /**
+   * Check if an error is a rate-limit (429) response.
+   * @param err - The caught error
+   * @returns true if the error indicates rate limiting
+   */
+  private isRateLimitError(err: any): boolean {
+    const msg = err.message || '';
+    return err.status === 429 || msg.includes('429') || msg.includes('rate limit') || msg.includes('Rate limit');
+  }
+
+  /**
+   * Check if an error is non-retryable (auth failures, bad requests, etc.).
+   * These errors won't resolve with retries, so we fail immediately.
+   * @param err - The caught error
+   * @returns true if the error should not be retried
+   */
+  private isNonRetryable(err: any): boolean {
+    const msg = err.message || '';
+    // 401 Unauthorized — bad API key
+    if (err.status === 401 || msg.includes('401') || msg.includes('Unauthorized')) return true;
+    // 404 Not Found — bad model or endpoint
+    if (err.status === 404 || msg.includes('404') || msg.includes('not found')) return true;
+    // Context length exceeded — needs /compact, not a retry
+    if (msg.includes('context_length_exceeded') || msg.includes('maximum context length')) return true;
+    return false;
+  }
+
+  // ─── Retry Helpers ─────────────────────────────────────────────
+
+  /**
+   * Sleep for the given duration with a visible countdown via onNotice.
+   * Respects the abort signal so the user can cancel mid-wait.
+   * @param ms - Milliseconds to wait
+   * @param reason - Human-readable reason displayed in the notice
+   * @param callbacks - Agent callbacks for sending notices
+   * @param signal - Optional abort signal
+   */
+  private async sleepWithCountdown(
+    ms: number,
+    reason: string,
+    callbacks: AgentCallbacks,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const seconds = Math.ceil(ms / 1000);
+    callbacks.onNotice(`${reason} Retrying in ${seconds}s...`);
+
+    return new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, ms);
+
+      // If the user cancels, stop waiting immediately
+      if (signal) {
+        const onAbort = () => {
+          clearTimeout(timer);
+          resolve();
+        };
+        signal.addEventListener('abort', onAbort, { once: true });
+      }
+    });
+  }
+
+  /**
+   * Handle a rate-limit error: rotate keys or wait and retry.
+   * @param callbacks - Agent callbacks for notices
+   * @param signal - Optional abort signal
+   * @returns true if we should retry the request
+   */
+  private async handleRateLimit(callbacks: AgentCallbacks, signal?: AbortSignal): Promise<boolean> {
+    const currentKey = this.keyRotator.getCurrentKey();
+    this.keyRotator.markRateLimited(currentKey);
+
+    // Mask key for display: show only last 4 chars
+    const maskedKey = '***' + currentKey.slice(-4);
+
+    if (this.keyRotator.hasAlternativeKeys()) {
+      // Try rotating to a different key
+      const nextKey = this.keyRotator.rotate();
+
+      if (nextKey) {
+        const maskedNext = '***' + nextKey.slice(-4);
+        callbacks.onNotice(`Rate limit hit on key ${maskedKey}. Rotated to key ${maskedNext}.`);
+        // Recreate client with the new key
+        this.client = new OpenAI({
+          apiKey: nextKey,
+          baseURL: this.config.baseUrl,
+        });
+        return true;
+      }
+    }
+
+    // No alternative keys available (single key or all exhausted)
+    // Wait and retry with the same key pool
+    await this.sleepWithCountdown(
+      RETRY_DELAY_MS,
+      `Rate limit hit${this.keyRotator.hasAlternativeKeys() ? ' on all keys' : ''}.`,
+      callbacks,
+      signal,
+    );
+
+    return !signal?.aborted;
+  }
+
+  /**
+   * Handle a transient (retryable) error: wait with fixed delay and retry.
+   * @param err - The error that occurred
+   * @param callbacks - Agent callbacks for notices
+   * @param signal - Optional abort signal
+   * @returns true if we should retry the request
+   */
+  private async handleTransientError(
+    err: any,
+    callbacks: AgentCallbacks,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
+    const reason = err.message || 'Unknown error';
+    await this.sleepWithCountdown(
+      RETRY_DELAY_MS,
+      `Error: ${reason}.`,
+      callbacks,
+      signal,
+    );
+    return !signal?.aborted;
+  }
+
   /**
    * Run the agent loop: send user message, stream response, execute tools.
+   * Automatically retries on rate limits (with key rotation) and transient errors.
    * @param userMessage - The user's input text
-   * @param callbacks - Event callbacks for tokens, tools, errors, completion
+   * @param callbacks - Event callbacks for tokens, tools, errors, completion, notices
    * @param signal - Optional AbortSignal for cancelling mid-generation (e.g. Escape key)
    */
   async *run(userMessage: string, callbacks: AgentCallbacks, signal?: AbortSignal): AsyncGenerator<void> {
@@ -210,7 +356,33 @@ export class Agent {
           callbacks.onComplete();
           return;
         }
-        callbacks.onError(err);
+
+        // Rate limit — rotate key or wait and retry forever
+        if (this.isRateLimitError(err)) {
+          const shouldRetry = await this.handleRateLimit(callbacks, signal);
+          if (shouldRetry) {
+            continueLoop = true;
+            continue;
+          }
+          // User cancelled during wait
+          callbacks.onComplete();
+          return;
+        }
+
+        // Non-retryable error — fail immediately
+        if (this.isNonRetryable(err)) {
+          callbacks.onError(err);
+          return;
+        }
+
+        // Transient error — wait fixed duration and retry forever
+        const shouldRetry = await this.handleTransientError(err, callbacks, signal);
+        if (shouldRetry) {
+          continueLoop = true;
+          continue;
+        }
+        // User cancelled during wait
+        callbacks.onComplete();
         return;
       }
     }

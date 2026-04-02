@@ -3,7 +3,7 @@
 
 import chalk from 'chalk';
 import { c } from '../utils/theme.js';
-import { BULLET, TOOL_ARROW, CHECKMARK, CROSS, INFO_MARK, WARN_MARK } from '../constants/figures.js';
+import { BULLET, TOOL_ARROW, CHECKMARK, CROSS, INFO_MARK, WARN_MARK, ROTATE_MARK } from '../constants/figures.js';
 import { PRODUCT_NAME, PRODUCT_VERSION } from '../constants/product.js';
 import { renderMarkdown } from '../utils/markdown.js';
 
@@ -86,6 +86,10 @@ export function printSuccess(message: string): void {
   console.log(c.success(`\n  ${CHECKMARK} `) + message);
 }
 
+/** Styled notice for automatic actions (key rotation, retries) */
+export function printNotice(message: string): void {
+  console.log(c.permission(`\n  ${ROTATE_MARK} `) + message);
+}
 // ─── Help ────────────────────────────────────────────────────────
 
 export function printHelp(): void {

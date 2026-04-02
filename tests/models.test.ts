@@ -96,7 +96,7 @@ describe('migrateFromLegacy', () => {
 
     expect(result.activeModelId).toBe('migrated');
     expect(result.models).toHaveLength(1);
-    expect(result.models[0]!.apiKey).toBe('sk-test-key');
+    expect(result.models[0]!.apiKeys).toEqual(['sk-test-key']);
     expect(result.models[0]!.baseUrl).toBe('https://custom.api.com/v1');
     expect(result.models[0]!.model).toBe('gpt-42');
     expect(result.models[0]!.temperature).toBe(0.5);
@@ -106,7 +106,7 @@ describe('migrateFromLegacy', () => {
   it('should use defaults for missing fields in legacy config', () => {
     const result = migrateFromLegacy({});
 
-    expect(result.models[0]!.apiKey).toBe('sk-your-api-key-here');
+    expect(result.models[0]!.apiKeys).toEqual(['sk-your-api-key-here']);
     expect(result.models[0]!.baseUrl).toBe('https://api.openai.com/v1');
     expect(result.models[0]!.model).toBe('gpt-5');
     expect(result.models[0]!.temperature).toBe(0);
@@ -132,7 +132,7 @@ describe('loadModels / saveModels', () => {
       models: [{
         id: 'test-1',
         name: 'Test Model',
-        apiKey: 'sk-test',
+        apiKeys: ['sk-test'],
         baseUrl: 'https://test.api.com/v1',
         model: 'test-model-v1',
         temperature: 0.7,
@@ -161,10 +161,39 @@ describe('loadModels / saveModels', () => {
 
     // It should have migrated
     expect(config.models).toHaveLength(1);
-    expect(config.models[0]!.apiKey).toBe('sk-legacy');
+    expect(config.models[0]!.apiKeys).toEqual(['sk-legacy']);
     expect(config.models[0]!.model).toBe('legacy-model');
     // models.json should now exist
     expect(fs.existsSync(TEST_MODELS_FILE)).toBe(true);
+  });
+
+  it('should auto-migrate old single apiKey field to apiKeys array', () => {
+    // Simulate an old-format models.json with `apiKey` instead of `apiKeys`
+    fs.mkdirSync(TEST_CONFIG_DIR, { recursive: true });
+    const oldFormatConfig = {
+      activeModelId: 'old-1',
+      models: [{
+        id: 'old-1',
+        name: 'Old Format',
+        apiKey: 'sk-old-key',
+        baseUrl: 'https://api.openai.com/v1',
+        model: 'gpt-4',
+        temperature: 0,
+      }],
+    };
+    fs.writeFileSync(TEST_MODELS_FILE, JSON.stringify(oldFormatConfig, null, 2));
+
+    const config = loadModels();
+
+    // Should have been migrated to apiKeys array
+    expect(config.models[0]!.apiKeys).toEqual(['sk-old-key']);
+    // Old apiKey field should be gone
+    expect((config.models[0] as any).apiKey).toBeUndefined();
+
+    // Verify it was also persisted
+    const raw = JSON.parse(fs.readFileSync(TEST_MODELS_FILE, 'utf-8'));
+    expect(raw.models[0].apiKeys).toEqual(['sk-old-key']);
+    expect(raw.models[0].apiKey).toBeUndefined();
   });
 });
 
@@ -179,7 +208,7 @@ describe('CRUD operations', () => {
   it('addModel should add a new profile and return it with an ID', () => {
     const newProfile = addModel({
       name: 'Claude',
-      apiKey: 'sk-claude',
+      apiKeys: ['sk-claude'],
       baseUrl: 'https://api.anthropic.com/v1',
       model: 'claude-3.5-sonnet',
       temperature: 0,
@@ -197,7 +226,7 @@ describe('CRUD operations', () => {
   it('setActiveModel should switch the active model', () => {
     const added = addModel({
       name: 'New',
-      apiKey: 'sk-new',
+      apiKeys: ['sk-new'],
       baseUrl: 'https://new.api.com/v1',
       model: 'new-model',
       temperature: 0,
@@ -240,7 +269,7 @@ describe('CRUD operations', () => {
     // Add a second model so we can delete one
     const added = addModel({
       name: 'Temp',
-      apiKey: 'sk-temp',
+      apiKeys: ['sk-temp'],
       baseUrl: 'https://temp.api.com/v1',
       model: 'temp-model',
       temperature: 0,
@@ -270,7 +299,7 @@ describe('CRUD operations', () => {
     // Add a second model and make the first one active
     const second = addModel({
       name: 'Second',
-      apiKey: 'sk-second',
+      apiKeys: ['sk-second'],
       baseUrl: 'https://second.api.com/v1',
       model: 'second-model',
       temperature: 0,
