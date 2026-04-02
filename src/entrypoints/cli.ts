@@ -198,9 +198,9 @@ async function runInteractive(agent: Agent, config: OCCCAConfig): Promise<void> 
       // Save to persistent history
       saveHistoryLine(trimmed);
 
-      // Handle slash commands
+      // Handle slash commands — pass rl so interactive prompts can pause it
       if (trimmed.startsWith('/')) {
-        const shouldExit = await handleCommand(trimmed, agent, config);
+        const shouldExit = await handleCommand(trimmed, agent, config, rl);
         if (shouldExit) {
           rl.close();
           process.exit(0);
@@ -222,7 +222,11 @@ async function runInteractive(agent: Agent, config: OCCCAConfig): Promise<void> 
       try {
         await runAgentTurn(agent, trimmed);
       } catch (err: any) {
+        // Show both user-friendly and debug info so crashes are diagnosable
         printError(formatApiError(err));
+        if (err.stack && !err.message?.includes(err.stack)) {
+          printError(`Debug: ${err.stack}`);
+        }
       }
     }
   } finally {
@@ -319,11 +323,12 @@ function formatApiError(error: Error): string {
 
 /**
  * Interactive config editor — edits the currently active model profile.
- * Supports Escape to cancel midway through editing.
+ * Pauses readline to prevent input conflict, supports Escape to cancel.
  * @param config - Current runtime config (mutated in place)
  * @param agent - Agent instance to refresh after config change
+ * @param rl - The main readline instance to pause during editing
  */
-async function runConfigEditor(config: OCCCAConfig, agent: Agent): Promise<void> {
+async function runConfigEditor(config: OCCCAConfig, agent: Agent, rl?: readline.Interface): Promise<void> {
   try {
     const { c } = await import('../utils/theme.js');
     const modelsConfig = loadModels();
@@ -376,15 +381,18 @@ async function runConfigEditor(config: OCCCAConfig, agent: Agent): Promise<void>
 
 /**
  * Handle /model and its subcommands (add, edit, remove, or switch).
- * No args → interactive picker. With name → quick-switch by profile name.
+ * Pauses the main readline during interactive pickers to prevent
+ * arrow keys from cycling through input history.
  * @param arg - Subcommand or model profile name
  * @param config - Runtime config (mutated on switch)
  * @param agent - Agent instance to refresh
+ * @param rl - The main readline instance to pause during pickers
  */
 async function handleModelCommand(
   arg: string,
   config: OCCCAConfig,
   agent: Agent,
+  rl?: readline.Interface,
 ): Promise<void> {
   const subcommand = arg.split(/\s+/)[0]?.toLowerCase() || '';
 
@@ -411,29 +419,34 @@ async function handleModelCommand(
       }
 
       case 'edit': {
-        // Pick a model and edit it
-        const modelsConfig = loadModels();
-        const targetId = await pickModelForAction(modelsConfig.models, 'edit');
-        if (!targetId) {
-          printInfo('Edit cancelled.');
-          return;
-        }
-        const target = modelsConfig.models.find(m => m.id === targetId);
-        if (!target) return;
+        // Pause readline so the arrow-key picker doesn't conflict
+        rl?.pause();
+        try {
+          const modelsConfig = loadModels();
+          const targetId = await pickModelForAction(modelsConfig.models, 'edit');
+          if (!targetId) {
+            printInfo('Edit cancelled.');
+            return;
+          }
+          const target = modelsConfig.models.find(m => m.id === targetId);
+          if (!target) return;
 
-        const updated = await runModelEditor({ ...target });
-        updateModel(updated.id, {
-          name: updated.name,
-          apiKeys: updated.apiKeys,
-          baseUrl: updated.baseUrl,
-          model: updated.model,
-          temperature: updated.temperature,
-        });
-        printSuccess(`Model "${updated.name}" updated.`);
+          const updated = await runModelEditor({ ...target });
+          updateModel(updated.id, {
+            name: updated.name,
+            apiKeys: updated.apiKeys,
+            baseUrl: updated.baseUrl,
+            model: updated.model,
+            temperature: updated.temperature,
+          });
+          printSuccess(`Model "${updated.name}" updated.`);
 
-        // If the edited model is the active one, refresh the agent
-        if (targetId === modelsConfig.activeModelId) {
-          applyActiveModel(config, agent);
+          // If the edited model is the active one, refresh the agent
+          if (targetId === modelsConfig.activeModelId) {
+            applyActiveModel(config, agent);
+          }
+        } finally {
+          rl?.resume();
         }
         return;
       }
@@ -441,30 +454,35 @@ async function handleModelCommand(
       case 'remove':
       case 'rm':
       case 'delete': {
-        // Pick a model and remove it
         const modelsConfig = loadModels();
         if (modelsConfig.models.length <= 1) {
           printWarning('Cannot remove the last model profile.');
           return;
         }
-        const targetId = await pickModelForAction(modelsConfig.models, 'remove');
-        if (!targetId) {
-          printInfo('Removal cancelled.');
-          return;
-        }
-        const target = modelsConfig.models.find(m => m.id === targetId);
-        const wasActive = targetId === modelsConfig.activeModelId;
-        const removed = removeModel(targetId);
-        if (removed) {
-          printSuccess(`Model "${target?.name}" removed.`);
-          // If we deleted the active model, refresh to the new active
-          if (wasActive) {
-            applyActiveModel(config, agent);
-            const newActive = loadModels().models.find(m => m.id === loadModels().activeModelId);
-            printInfo(`Switched to "${newActive?.name}".`);
+        // Pause readline so the arrow-key picker doesn't conflict
+        rl?.pause();
+        try {
+          const targetId = await pickModelForAction(modelsConfig.models, 'remove');
+          if (!targetId) {
+            printInfo('Removal cancelled.');
+            return;
           }
-        } else {
-          printError('Failed to remove model.');
+          const target = modelsConfig.models.find(m => m.id === targetId);
+          const wasActive = targetId === modelsConfig.activeModelId;
+          const removed = removeModel(targetId);
+          if (removed) {
+            printSuccess(`Model "${target?.name}" removed.`);
+            // If we deleted the active model, refresh to the new active
+            if (wasActive) {
+              applyActiveModel(config, agent);
+              const newActive = loadModels().models.find(m => m.id === loadModels().activeModelId);
+              printInfo(`Switched to "${newActive?.name}".`);
+            }
+          } else {
+            printError('Failed to remove model.');
+          }
+        } finally {
+          rl?.resume();
         }
         return;
       }
@@ -477,7 +495,15 @@ async function handleModelCommand(
           printCurrentModelInfo(activeProfile);
         }
 
-        const selectedId = await runModelPicker(modelsConfig.models, modelsConfig.activeModelId);
+        // Pause readline so arrow keys don't cycle through input history
+        rl?.pause();
+        let selectedId: string | null;
+        try {
+          selectedId = await runModelPicker(modelsConfig.models, modelsConfig.activeModelId);
+        } finally {
+          rl?.resume();
+        }
+
         if (!selectedId) {
           printInfo('No change.');
           return;
@@ -532,10 +558,15 @@ function applyActiveModel(config: OCCCAConfig, agent: Agent): void {
 
 // ─── Slash Commands ─────────────────────────────────────────────
 
+/**
+ * Route slash commands. Receives readline so interactive subcommands
+ * can pause it to avoid arrow-key conflicts.
+ */
 async function handleCommand(
   input: string,
   agent: Agent,
   config: OCCCAConfig,
+  rl?: readline.Interface,
 ): Promise<boolean> {
   const parts = input.split(/\s+/);
   const cmd = parts[0]!.toLowerCase();
@@ -566,12 +597,12 @@ async function handleCommand(
     }
 
     case '/model': {
-      await handleModelCommand(arg, config, agent);
+      await handleModelCommand(arg, config, agent, rl);
       return false;
     }
 
     case '/config': {
-      await runConfigEditor(config, agent);
+      await runConfigEditor(config, agent, rl);
       return false;
     }
 
@@ -592,9 +623,29 @@ async function handleCommand(
   }
 }
 
+// ─── Process Error Guards ────────────────────────────────────────
+// Prevent silent crashes — log full error details before exiting
+
+process.on('uncaughtException', (err) => {
+  printError(`Uncaught exception: ${err.message}`);
+  if (err.stack) printError(`Stack: ${err.stack}`);
+  // Don't exit — let the REPL continue if possible
+});
+
+process.on('unhandledRejection', (reason: any) => {
+  const msg = reason?.message || String(reason);
+  printError(`Unhandled rejection: ${msg}`);
+  if (reason?.stack) printError(`Stack: ${reason.stack}`);
+  // Don't exit — let the REPL continue if possible
+});
+
 // ─── Run ─────────────────────────────────────────────────────────
 
 main().catch((err) => {
-  printError(err.message);
+  // Show full error details for debugging, not just message
+  printError(`Fatal: ${err.message || err}`);
+  if (err.stack) {
+    console.error(err.stack);
+  }
   process.exit(1);
 });
