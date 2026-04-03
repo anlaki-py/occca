@@ -127,6 +127,12 @@ export function runModelPicker(
     // Initial render
     let lineCount = renderPickerList(models, activeId, cursorIndex, 0);
 
+    // Save and remove ALL existing stdin 'data' listeners to prevent
+    // readline's emitKeypressEvents handler from seeing our arrow keys
+    // and cycling through input history.
+    const savedDataListeners = process.stdin.rawListeners('data') as Function[];
+    process.stdin.removeAllListeners('data');
+
     // Enable raw mode to capture individual keypresses
     const wasRaw = process.stdin.isRaw;
     if (process.stdin.isTTY) {
@@ -138,6 +144,10 @@ export function runModelPicker(
       process.stdin.removeListener('data', onData);
       if (process.stdin.isTTY) {
         process.stdin.setRawMode(wasRaw ?? false);
+      }
+      // Restore all previously saved data listeners
+      for (const listener of savedDataListeners) {
+        process.stdin.on('data', listener as (...args: any[]) => void);
       }
       // Print a blank line after the picker
       console.log('');
@@ -364,6 +374,12 @@ export function pickModelForAction(
 
     let lineCount = renderList(0);
 
+    // Save and remove ALL existing stdin 'data' listeners to prevent
+    // readline's emitKeypressEvents handler from seeing our arrow keys
+    // and cycling through input history.
+    const savedDataListeners = process.stdin.rawListeners('data') as Function[];
+    process.stdin.removeAllListeners('data');
+
     // Enable raw mode
     const wasRaw = process.stdin.isRaw;
     if (process.stdin.isTTY) {
@@ -375,6 +391,10 @@ export function pickModelForAction(
       process.stdin.removeListener('data', onData);
       if (process.stdin.isTTY) {
         process.stdin.setRawMode(wasRaw ?? false);
+      }
+      // Restore all previously saved data listeners
+      for (const listener of savedDataListeners) {
+        process.stdin.on('data', listener as (...args: any[]) => void);
       }
       console.log('');
     };
