@@ -6,7 +6,57 @@ on:
       - master
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target:
+          - { name: win-x64, pkg-target: node20-win-x64, artifact: occa-win-x64.exe }
+          - { name: win-arm64, pkg-target: node20-win-arm64, artifact: occa-win-arm64.exe }
+          - { name: linux-x64, pkg-target: node20-linux-x64, artifact: occa-linux-x64 }
+          - { name: linux-arm64, pkg-target: node20-linux-arm64, artifact: occa-linux-arm64 }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Bundle with esbuild
+        run: npx esbuild src/entrypoints/cli.ts --bundle --platform=node --outfile=dist/bundle.cjs --format=cjs
+
+      - name: Build binary
+        run: npx pkg dist/bundle.cjs --targets ${{ matrix.target.pkg-target }} --output dist/bin/${{ matrix.target.artifact }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target.artifact }}
+          path: dist/bin/${{ matrix.target.artifact }}
+
   release:
+    needs: build
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -16,6 +66,11 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
       - name: Get timestamp
         id: timestamp
         run: echo "tag=$(date +'%Y-%m-%d_%H-%M-%S')" >> $GITHUB_OUTPUT
@@ -23,28 +78,20 @@ jobs:
       - name: Determine next version
         id: version
         run: |
-          # Get the latest version tag (format: v0.0.1)
           LATEST_TAG=$(git tag -l 'v*' --sort=-version:refname | head -n 1)
 
           if [ -z "$LATEST_TAG" ]; then
-            # No version tag exists, start with 0.0.1
             NEXT_VERSION="v0.0.1"
           else
-            # Parse the version
             VERSION=${LATEST_TAG#v}
             MAJOR=$(echo "$VERSION" | cut -d. -f1)
             MINOR=$(echo "$VERSION" | cut -d. -f2)
             PATCH=$(echo "$VERSION" | cut -d. -f3)
 
-            # Fallbacks if parsing fails
             MAJOR=${MAJOR:-0}
             MINOR=${MINOR:-0}
             PATCH=${PATCH:-0}
 
-            # Roll over rules:
-            # patch: 0..99
-            # minor: 0..99
-            # major: unlimited
             if [ "$PATCH" -ge 99 ]; then
               PATCH=0
               if [ "$MINOR" -ge 99 ]; then
@@ -62,9 +109,22 @@ jobs:
 
           echo "version=$NEXT_VERSION" >> $GITHUB_OUTPUT
 
+      - name: Prepare release assets
+        run: |
+          mkdir -p release-assets
+          mv artifacts/occa-win-x64.exe/occa-win-x64.exe release-assets/occa-win-x64.exe
+          mv artifacts/occa-win-arm64.exe/occa-win-arm64.exe release-assets/occa-win-arm64.exe
+          mv artifacts/occa-linux-x64/occa-linux-x64 release-assets/occa-linux-x64
+          mv artifacts/occa-linux-arm64/occa-linux-arm64 release-assets/occa-linux-arm64
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.version }}
           name: "Release ${{ steps.version.outputs.version }} (${{ steps.timestamp.outputs.tag }})"
           generate_release_notes: true
+          files: |
+            release-assets/occa-win-x64.exe
+            release-assets/occa-win-arm64.exe
+            release-assets/occa-linux-x64
+            release-assets/occa-linux-arm64

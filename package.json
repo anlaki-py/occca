@@ -10,7 +10,7 @@
   "scripts": {
     "dev": "node --no-deprecation --import tsx/esm src/entrypoints/cli.ts",
     "build": "tsc",
-    "build:static": "esbuild src/entrypoints/cli.ts --bundle --platform=node --outfile=dist/bundle.cjs --format=cjs && pkg dist/bundle.cjs --targets node20-win-x64,node20-linux-x64 --out-path dist/bin && mv dist/bin/bundle-win.exe dist/bin/occca-win.exe && mv dist/bin/bundle-linux dist/bin/occca-linux",
+    "build:static": "esbuild src/entrypoints/cli.ts --bundle --platform=node --outfile=dist/bundle.cjs --format=cjs && pkg dist/bundle.cjs --targets node20-win-x64 --out-path dist/bin && mv dist/bin/bundle.exe dist/bin/occa.exe 2>/dev/null || move dist\\bin\\bundle.exe dist\\bin\\occa.exe",
     "start": "node --no-deprecation dist/entrypoints/cli.js",
     "preview": "tsx src/entrypoints/cli.ts",
     "test": "vitest run",
@@ -27,7 +27,12 @@
   "pkg": {
     "scripts": "dist/bundle.cjs",
     "assets": [],
-    "targets": ["node20-win-x64", "node20-linux-x64"],
+    "targets": [
+      "node20-win-x64",
+      "node20-win-arm64",
+      "node20-linux-x64",
+      "node20-linux-arm64"
+    ],
     "outputPath": "dist/bin"
   },
   "dependencies": {
