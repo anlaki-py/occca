@@ -28,26 +28,21 @@ jobs:
     strategy:
       matrix:
         target:
-          - { name: win-x64, pkg-target: node20-win-x64, artifact: occca-win-x64.exe }
-          - { name: win-arm64, pkg-target: node20-win-arm64, artifact: occca-win-arm64.exe }
-          - { name: linux-x64, pkg-target: node20-linux-x64, artifact: occca-linux-x64 }
-          - { name: linux-arm64, pkg-target: node20-linux-arm64, artifact: occca-linux-arm64 }
+          - { name: win-x64, bun-target: bun-windows-x64, artifact: occca-win-x64.exe }
+          - { name: win-arm64, bun-target: bun-windows-arm64, artifact: occca-win-arm64.exe }
+          - { name: linux-x64, bun-target: bun-linux-x64, artifact: occca-linux-x64 }
+          - { name: linux-arm64, bun-target: bun-linux-arm64, artifact: occca-linux-arm64 }
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
 
       - name: Install dependencies
-        run: npm ci
-
-      - name: Bundle with esbuild
-        run: npx esbuild src/entrypoints/cli.ts --bundle --platform=node --outfile=dist/bundle.cjs --format=cjs
+        run: bun install
 
       - name: Build binary
-        run: npx pkg dist/bundle.cjs --targets ${{ matrix.target.pkg-target }} --output dist/bin/${{ matrix.target.artifact }}
+        run: bun build src/entrypoints/cli.ts --compile --target=${{ matrix.target.bun-target }} --outfile dist/bin/${{ matrix.target.artifact }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
