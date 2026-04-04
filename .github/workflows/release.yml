@@ -28,10 +28,10 @@ jobs:
     strategy:
       matrix:
         target:
-          - { name: win-x64, pkg-target: node20-win-x64, artifact: occa-win-x64.exe }
-          - { name: win-arm64, pkg-target: node20-win-arm64, artifact: occa-win-arm64.exe }
-          - { name: linux-x64, pkg-target: node20-linux-x64, artifact: occa-linux-x64 }
-          - { name: linux-arm64, pkg-target: node20-linux-arm64, artifact: occa-linux-arm64 }
+          - { name: win-x64, pkg-target: node20-win-x64, artifact: occca-win-x64.exe }
+          - { name: win-arm64, pkg-target: node20-win-arm64, artifact: occca-win-arm64.exe }
+          - { name: linux-x64, pkg-target: node20-linux-x64, artifact: occca-linux-x64 }
+          - { name: linux-arm64, pkg-target: node20-linux-arm64, artifact: occca-linux-arm64 }
     steps:
       - uses: actions/checkout@v4
 
@@ -112,10 +112,10 @@ jobs:
       - name: Prepare release assets
         run: |
           mkdir -p release-assets
-          mv artifacts/occa-win-x64.exe/occa-win-x64.exe release-assets/occa-win-x64.exe
-          mv artifacts/occa-win-arm64.exe/occa-win-arm64.exe release-assets/occa-win-arm64.exe
-          mv artifacts/occa-linux-x64/occa-linux-x64 release-assets/occa-linux-x64
-          mv artifacts/occa-linux-arm64/occa-linux-arm64 release-assets/occa-linux-arm64
+          mv artifacts/occca-win-x64.exe/occca-win-x64.exe release-assets/occca-win-x64.exe
+          mv artifacts/occca-win-arm64.exe/occca-win-arm64.exe release-assets/occca-win-arm64.exe
+          mv artifacts/occca-linux-x64/occca-linux-x64 release-assets/occca-linux-x64
+          mv artifacts/occca-linux-arm64/occca-linux-arm64 release-assets/occca-linux-arm64
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
@@ -124,7 +124,7 @@ jobs:
           name: "Release ${{ steps.version.outputs.version }} (${{ steps.timestamp.outputs.tag }})"
           generate_release_notes: true
           files: |
-            release-assets/occa-win-x64.exe
-            release-assets/occa-win-arm64.exe
-            release-assets/occa-linux-x64
-            release-assets/occa-linux-arm64
+            release-assets/occca-win-x64.exe
+            release-assets/occca-win-arm64.exe
+            release-assets/occca-linux-x64
+            release-assets/occca-linux-arm64
