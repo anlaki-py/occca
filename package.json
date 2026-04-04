@@ -10,6 +10,7 @@
   "scripts": {
     "dev": "node --no-deprecation --import tsx/esm src/entrypoints/cli.ts",
     "build": "tsc",
+    "build:static": "esbuild src/entrypoints/cli.ts --bundle --platform=node --outfile=dist/bundle.cjs --format=cjs && pkg dist/bundle.cjs --targets node20-win-x64 --out-path dist/bin && mv dist/bin/bundle.exe dist/bin/occca.exe",
     "start": "node --no-deprecation dist/entrypoints/cli.js",
     "preview": "tsx src/entrypoints/cli.ts",
     "test": "vitest run",
@@ -23,6 +24,12 @@
     "developer-tools"
   ],
   "license": "MIT",
+  "pkg": {
+    "scripts": "dist/bundle.cjs",
+    "assets": [],
+    "targets": ["node20-win-x64"],
+    "outputPath": "dist/bin"
+  },
   "dependencies": {
     "chalk": "^5.3.0",
     "commander": "^12.1.0",
@@ -34,6 +41,8 @@
   },
   "devDependencies": {
     "@types/node": "^22.9.0",
+    "@yao-pkg/pkg": "^5.0.0",
+    "esbuild": "^0.27.7",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0",
     "vitest": "^4.1.2"
