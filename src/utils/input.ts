@@ -21,6 +21,10 @@ export class EscapeCancelledError extends Error {
  */
 export function askWithEscape(prompt: string): Promise<string> {
   return new Promise((resolve, reject) => {
+    // Disable keypress events from any previous readline to prevent
+    // double-echo when multiple readlines are created in sequence
+    process.stdin.removeAllListeners('keypress');
+
     const rl = readline.createInterface({
       input: process.stdin,
       output: process.stdout,
