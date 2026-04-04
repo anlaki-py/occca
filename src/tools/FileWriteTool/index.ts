@@ -33,7 +33,7 @@ Usage:
   },
 };
 
-export async function executeFileWrite(args: Record<string, unknown>): Promise<string> {
+export async function executeFileWrite(args: Record<string, unknown>, _signal?: AbortSignal): Promise<string> {
   const filePath = resolveFilePath(String(args.file_path || ''));
   const content = String(args.content ?? '');
 

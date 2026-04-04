@@ -2,7 +2,7 @@
 
 import type OpenAI from 'openai';
 
-export type ToolFunction = (args: Record<string, unknown>) => Promise<string>;
+export type ToolFunction = (args: Record<string, unknown>, signal?: AbortSignal) => Promise<string>;
 
 export interface ToolDefinition {
   definition: OpenAI.Chat.Completions.ChatCompletionTool;

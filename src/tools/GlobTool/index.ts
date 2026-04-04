@@ -38,7 +38,7 @@ export const globTool: OpenAI.Chat.Completions.ChatCompletionTool = {
  * @param args - { pattern, path? }
  * @returns newline-separated list of matching file paths, sorted by modification time
  */
-export async function executeGlob(args: Record<string, unknown>): Promise<string> {
+export async function executeGlob(args: Record<string, unknown>, _signal?: AbortSignal): Promise<string> {
   const pattern = String(args.pattern || '');
   const searchPath = args.path ? String(args.path) : getCwd();
 

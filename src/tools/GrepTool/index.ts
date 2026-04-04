@@ -44,7 +44,7 @@ Usage:
  * @param args - { pattern, path?, include? }
  * @returns formatted search results or error message
  */
-export async function executeGrep(args: Record<string, unknown>): Promise<string> {
+export async function executeGrep(args: Record<string, unknown>, _signal?: AbortSignal): Promise<string> {
   const pattern = String(args.pattern || '');
   const searchPath = args.path ? String(args.path) : getCwd();
   const include = args.include ? String(args.include) : undefined;

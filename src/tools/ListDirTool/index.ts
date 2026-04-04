@@ -43,7 +43,7 @@ function formatSize(bytes: number): string {
  * @param args - { path: string }
  * @returns formatted directory listing or error message
  */
-export async function executeListDir(args: Record<string, unknown>): Promise<string> {
+export async function executeListDir(args: Record<string, unknown>, _signal?: AbortSignal): Promise<string> {
   const dirPath = resolveFilePath(String(args.path || '.'));
 
   try {

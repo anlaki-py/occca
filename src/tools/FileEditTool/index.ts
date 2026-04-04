@@ -39,7 +39,7 @@ Usage:
   },
 };
 
-export async function executeFileEdit(args: Record<string, unknown>): Promise<string> {
+export async function executeFileEdit(args: Record<string, unknown>, _signal?: AbortSignal): Promise<string> {
   const filePath = resolveFilePath(String(args.file_path || ''));
   const oldString = String(args.old_string || '');
   const newString = String(args.new_string ?? '');

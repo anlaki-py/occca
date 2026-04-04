@@ -318,6 +318,12 @@ export class Agent {
             const toolResults: ChatCompletionMessageParam[] = [];
 
             for (const [_, tc] of toolCalls) {
+              // Check for cancellation before each tool call
+              if (signal?.aborted) {
+                this.safeComplete(callbacks);
+                return;
+              }
+
               let args: Record<string, unknown> = {};
               try {
                 args = JSON.parse(tc.arguments || '{}');
@@ -331,9 +337,15 @@ export class Agent {
               let result: string;
               if (tool) {
                 try {
-                  result = await tool.execute(args);
+                  // Pass abort signal to tool execution for cancellation support
+                  result = await tool.execute(args, signal);
                 } catch (err: any) {
-                  result = `Error executing ${tc.name}: ${err.message}`;
+                  // Treat abort as cancellation, not error
+                  if (signal?.aborted || err.name === 'AbortError') {
+                    result = '[Tool execution cancelled by user]';
+                  } else {
+                    result = `Error executing ${tc.name}: ${err.message}`;
+                  }
                 }
               } else {
                 result = `Error: Unknown tool "${tc.name}"`;

@@ -1,4 +1,4 @@
-import { exec } from 'child_process';
+import { exec, ChildProcess } from 'child_process';
 import type OpenAI from 'openai';
 import { getCwd, truncateOutput } from '../../utils/helpers.js';
 
@@ -42,7 +42,7 @@ Instructions:
   },
 };
 
-export async function executeBash(args: Record<string, unknown>): Promise<string> {
+export async function executeBash(args: Record<string, unknown>, signal?: AbortSignal): Promise<string> {
   const command = String(args.command || '');
   const timeout = Math.min(Number(args.timeout) || 120000, 600000);
 
@@ -88,5 +88,20 @@ export async function executeBash(args: Record<string, unknown>): Promise<string
         resolve(truncateOutput(output));
       }
     );
+
+    // Kill the child process if the abort signal fires
+    if (signal) {
+      const onAbort = () => {
+        child.kill('SIGTERM');
+        // Give process a moment to clean up, then force kill
+        setTimeout(() => {
+          if (!child.killed) {
+            child.kill('SIGKILL');
+          }
+        }, 100);
+      };
+
+      signal.addEventListener('abort', onAbort, { once: true });
+    }
   });
 }
