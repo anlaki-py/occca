@@ -13,14 +13,39 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Get timestamp
         id: timestamp
         run: echo "tag=$(date +'%Y-%m-%d_%H-%M-%S')" >> $GITHUB_OUTPUT
 
+      - name: Determine next version
+        id: version
+        run: |
+          # Get the latest version tag (format: v0.0.1)
+          LATEST_TAG=$(git tag -l 'v*' --sort=-version:refname | head -n 1)
+
+          if [ -z "$LATEST_TAG" ]; then
+            # No version tag exists, start with 0.0.1
+            NEXT_VERSION="v0.0.1"
+          else
+            # Parse and increment the version
+            VERSION=${LATEST_TAG#v}
+            MAJOR=$(echo $VERSION | cut -d. -f1)
+            MINOR=$(echo $VERSION | cut -d. -f2)
+            PATCH=$(echo $VERSION | cut -d. -f3)
+
+            # Increment patch version
+            PATCH=$((PATCH + 1))
+            NEXT_VERSION="v${MAJOR}.${MINOR}.${PATCH}"
+          fi
+
+          echo "version=$NEXT_VERSION" >> $GITHUB_OUTPUT
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.timestamp.outputs.tag }}
-          name: "Auto Release ${{ steps.timestamp.outputs.tag }}"
+          tag_name: ${{ steps.version.outputs.version }}
+          name: "Release ${{ steps.version.outputs.version }} (${{ steps.timestamp.outputs.tag }})"
           generate_release_notes: true
