@@ -23,6 +23,11 @@ describe('isPathGitignored', () => {
   });
 
   it('returns true for a gitignored directory (dist)', async () => {
+    // Ensure dist exists (git check-ignore needs the path to exist on some systems)
+    const distPath = path.join(cwd, 'dist');
+    try {
+      await import('fs').then(fs => fs.promises.mkdir(distPath, { recursive: true }));
+    } catch {}
     const result = await isPathGitignored('dist', cwd);
     expect(result).toBe(true);
   });
