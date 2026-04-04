@@ -30,14 +30,33 @@ jobs:
             # No version tag exists, start with 0.0.1
             NEXT_VERSION="v0.0.1"
           else
-            # Parse and increment the version
+            # Parse the version
             VERSION=${LATEST_TAG#v}
-            MAJOR=$(echo $VERSION | cut -d. -f1)
-            MINOR=$(echo $VERSION | cut -d. -f2)
-            PATCH=$(echo $VERSION | cut -d. -f3)
+            MAJOR=$(echo "$VERSION" | cut -d. -f1)
+            MINOR=$(echo "$VERSION" | cut -d. -f2)
+            PATCH=$(echo "$VERSION" | cut -d. -f3)
 
-            # Increment patch version
-            PATCH=$((PATCH + 1))
+            # Fallbacks if parsing fails
+            MAJOR=${MAJOR:-0}
+            MINOR=${MINOR:-0}
+            PATCH=${PATCH:-0}
+
+            # Roll over rules:
+            # patch: 0..99
+            # minor: 0..99
+            # major: unlimited
+            if [ "$PATCH" -ge 99 ]; then
+              PATCH=0
+              if [ "$MINOR" -ge 99 ]; then
+                MINOR=0
+                MAJOR=$((MAJOR + 1))
+              else
+                MINOR=$((MINOR + 1))
+              fi
+            else
+              PATCH=$((PATCH + 1))
+            fi
+
             NEXT_VERSION="v${MAJOR}.${MINOR}.${PATCH}"
           fi
 
