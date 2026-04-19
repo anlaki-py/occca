@@ -79,14 +79,10 @@ export function askWithEscape(prompt: string): Promise<string> {
  * Set up an Escape key listener that calls a callback when pressed.
  * Returns a cleanup function to remove the listener.
  *
- * CRITICAL DESIGN: This function MUST NOT touch process.stdin directly
- * (no setRawMode, no resume/pause, no 'data' listeners). All of those
- * interfere with readline's internal stream management on Windows and
- * cause the event loop to drain, silently killing the process.
- *
- * Instead, we listen for 'keypress' events which readline's
- * emitKeypressEvents() pipeline already emits on stdin. This works
- * _with_ readline rather than against it.
+ * This function ensures keypress events are emitted on stdin by calling
+ * emitKeypressEvents() explicitly. This is necessary because during tool
+ * execution (especially shell commands), readline may not be actively
+ * processing input, and keypress events wouldn't otherwise be emitted.
  *
  * @param onEscape - Callback invoked when Escape is pressed
  * @returns Cleanup function to stop listening
@@ -94,8 +90,20 @@ export function askWithEscape(prompt: string): Promise<string> {
 export function listenForEscape(onEscape: () => void): () => void {
   let cleaned = false;
 
-  // Use the 'keypress' event that readline has already set up on stdin.
-  // This avoids ANY direct manipulation of stdin's raw mode or flow state.
+  // Ensure keypress events are being emitted on stdin.
+  // This is idempotent - calling it multiple times is safe.
+  readline.emitKeypressEvents(process.stdin);
+
+  // Save previous raw mode state so we can restore it
+  const wasRaw = process.stdin.isRaw;
+
+  // Set raw mode to capture escape key reliably during tool execution.
+  // Without this, the terminal buffers input and escape sequences aren't
+  // parsed correctly, especially when child processes might be involved.
+  if (process.stdin.isTTY && !wasRaw) {
+    process.stdin.setRawMode(true);
+  }
+
   const onKeypress = (_ch: string | undefined, key: { name?: string } | undefined) => {
     if (key && key.name === 'escape') {
       cleanup();
@@ -107,6 +115,11 @@ export function listenForEscape(onEscape: () => void): () => void {
     if (cleaned) return;
     cleaned = true;
     process.stdin.removeListener('keypress', onKeypress);
+
+    // Restore previous raw mode state
+    if (process.stdin.isTTY && wasRaw === false && process.stdin.isRaw) {
+      process.stdin.setRawMode(false);
+    }
   };
 
   process.stdin.on('keypress', onKeypress);
