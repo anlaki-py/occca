@@ -44,6 +44,7 @@ import {
   printCurrentModelInfo,
 } from '../components/modelDisplay.js';
 import { listenForEscape, askWithEscape, EscapeCancelledError } from '../utils/input.js';
+import { initializeMcp, cleanupMcp } from '../mcp/index.js';
 
 // ─── CLI Argument Parsing ────────────────────────────────────────
 
@@ -88,6 +89,9 @@ async function main(): Promise<void> {
     console.log('');
   }
 
+  // Initialize MCP servers from mcp.json
+  await initializeMcp();
+
   // Build the key pool — CLI flag overrides the profile keys
   const apiKeys = opts.apiKey ? [opts.apiKey] : getActiveApiKeys();
 
@@ -96,6 +100,7 @@ async function main(): Promise<void> {
   // Non-interactive mode
   if (opts.prompt) {
     await runSinglePrompt(agent, opts.prompt);
+    await cleanupMcp();
     return;
   }
 
@@ -651,6 +656,7 @@ async function handleCommand(
     case '/quit':
       console.log('');
       printInfo('Goodbye!');
+      await cleanupMcp();
       return true;
 
     default:

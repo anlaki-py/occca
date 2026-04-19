@@ -10,6 +10,12 @@ import { fileEditTool, executeFileEdit } from './FileEditTool/index.js';
 import { globTool, executeGlob } from './GlobTool/index.js';
 import { grepTool, executeGrep } from './GrepTool/index.js';
 import { listDirTool, executeListDir } from './ListDirTool/index.js';
+import {
+  getMcpToolDefinitions,
+  executeMcpTool,
+  getMcpToolUserFacingName,
+  isMcpTool,
+} from './MCPTool/index.js';
 
 const toolRegistry: Map<string, ToolDefinition> = new Map();
 
@@ -28,13 +34,37 @@ register({ definition: grepTool, execute: executeGrep, userFacingName: (args) =>
 register({ definition: listDirTool, execute: executeListDir, userFacingName: (args) => args?.path ? `LS: ${String(args.path).split(/[/\\]/).pop() || args.path}` : 'LS' });
 
 export function getAllTools(): OpenAI.Chat.Completions.ChatCompletionTool[] {
-  return Array.from(toolRegistry.values()).map(t => t.definition);
+  // Get built-in tools
+  const builtInTools = Array.from(toolRegistry.values()).map(t => t.definition);
+  
+  // Get MCP tools
+  const mcpTools = getMcpToolDefinitions();
+  
+  return [...builtInTools, ...mcpTools];
 }
 
 export function getTool(name: string): ToolDefinition | undefined {
+  // Check if it's an MCP tool
+  if (isMcpTool(name)) {
+    return {
+      definition: {
+        type: 'function',
+        function: {
+          name,
+          description: 'MCP tool',
+          parameters: { type: 'object' },
+        },
+      },
+      execute: (args) => executeMcpTool(name, args),
+      userFacingName: (args) => getMcpToolUserFacingName(name, args),
+    };
+  }
+  
   return toolRegistry.get(name);
 }
 
 export function getToolNames(): string[] {
-  return Array.from(toolRegistry.keys());
+  const builtInNames = Array.from(toolRegistry.keys());
+  // Note: MCP tool names are dynamically discovered, so we only return built-in names here
+  return builtInNames;
 }
