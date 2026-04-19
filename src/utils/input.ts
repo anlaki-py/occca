@@ -15,14 +15,21 @@ export class EscapeCancelledError extends Error {
  * Prompt the user for input with Escape-to-cancel support.
  * Creates a temporary readline for the prompt, listens for Escape via
  * the 'keypress' event (which readline enables on stdin automatically).
+ *
+ * CRITICAL: Saves and restores existing keypress listeners to avoid
+ * breaking the main readline's input handling after this temporary
+ * readline closes. Without this, the main REPL would hang after
+ * interactive prompts like /model add.
+ *
  * @param prompt - The prompt string to display
  * @returns The user's trimmed answer
  * @throws EscapeCancelledError if the user presses Escape
  */
 export function askWithEscape(prompt: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    // Disable keypress events from any previous readline to prevent
-    // double-echo when multiple readlines are created in sequence
+    // Save existing keypress listeners BEFORE removing them.
+    // This is critical for not breaking the main readline's state.
+    const savedKeypressListeners = process.stdin.rawListeners('keypress') as Function[];
     process.stdin.removeAllListeners('keypress');
 
     const rl = readline.createInterface({
@@ -30,6 +37,8 @@ export function askWithEscape(prompt: string): Promise<string> {
       output: process.stdout,
       terminal: true,
     });
+
+    let cleaned = false;
 
     // Escape detection via readline's own 'keypress' pipeline
     const onKeypress = (_char: string, key: readline.Key) => {
@@ -40,8 +49,15 @@ export function askWithEscape(prompt: string): Promise<string> {
     };
 
     const cleanup = () => {
+      if (cleaned) return;
+      cleaned = true;
       process.stdin.removeListener('keypress', onKeypress);
       rl.close();
+      // Restore all previously saved keypress listeners so the main
+      // readline can continue functioning after this prompt finishes.
+      for (const listener of savedKeypressListeners) {
+        process.stdin.on('keypress', listener as (...args: any[]) => void);
+      }
     };
 
     // readline enables keypress events on stdin when terminal: true
@@ -54,7 +70,7 @@ export function askWithEscape(prompt: string): Promise<string> {
 
     // Also clean up if stdin is closed unexpectedly
     rl.once('close', () => {
-      process.stdin.removeListener('keypress', onKeypress);
+      cleanup();
     });
   });
 }
