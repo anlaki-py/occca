@@ -43,7 +43,13 @@ import {
   pickModelForAction,
   printCurrentModelInfo,
 } from '../components/modelDisplay.js';
-import { listenForEscape, askWithEscape, EscapeCancelledError } from '../utils/input.js';
+import {
+  listenForEscape,
+  askWithEscape,
+  EscapeCancelledError,
+  mergeQuestionAnswerWithCapturedLines,
+} from '../utils/input.js';
+import { createComposeState, handleComposeInput, type ComposeState } from '../utils/compose.js';
 import { initializeMcp, cleanupMcp, getMcpServerStatus, enableMcpServer, disableMcpServer } from '../mcp/index.js';
 
 // ─── CLI Argument Parsing ────────────────────────────────────────
@@ -63,7 +69,21 @@ const opts = program.opts();
 
 // ─── Slash commands ──────────────────────────────────────────────
 
-const SLASH_COMMANDS = ['/help', '/config', '/clear', '/new', '/compact', '/model', '/mcp', '/cost', '/exit', '/quit'];
+const SLASH_COMMANDS = [
+  '/help',
+  '/config',
+  '/clear',
+  '/new',
+  '/compact',
+  '/model',
+  '/mcp',
+  '/cost',
+  '/compose',
+  '/send',
+  '/cancel',
+  '/exit',
+  '/quit',
+];
 
 // ─── Main ────────────────────────────────────────────────────────
 
@@ -183,6 +203,13 @@ function createReadline(): readline.Interface {
  */
 function question(rl: readline.Interface, prompt: string): Promise<string> {
   return new Promise<string>((resolve, reject) => {
+    /**
+     * Amount of idle time (ms) used to detect the end of a paste burst.
+     * Multi-line paste events typically deliver several `line` events back-to-back.
+     * Waiting briefly lets us merge those lines into one logical user message.
+     */
+    const PASTE_BURST_WINDOW_MS = 40;
+
     // Force stdin into the correct state for readline input.
     // This is the core fix for the "can't type after tool calls" bug.
     if (process.stdin.isTTY) {
@@ -194,10 +221,36 @@ function question(rl: readline.Interface, prompt: string): Promise<string> {
     const onClose = () => reject(new Error('readline closed'));
     rl.once('close', onClose);
 
+    // Capture all line events while this question is active.
+    // This lets us merge multi-line paste into one submission.
+    const capturedLines: string[] = [];
+    const onLine = (line: string) => {
+      capturedLines.push(line);
+    };
+    rl.on('line', onLine);
+
     rl.question(prompt, (answer) => {
-      // Remove our close handler so it doesn't leak across iterations
-      rl.removeListener('close', onClose);
-      resolve(answer);
+      /**
+       * Resolve the final answer only after the paste burst settles.
+       * During this small window, additional line events are considered
+       * part of the same pasted message rather than separate prompts.
+       */
+      const settlePasteBurst = (lastCount: number): void => {
+        setTimeout(() => {
+          if (capturedLines.length !== lastCount) {
+            settlePasteBurst(capturedLines.length);
+            return;
+          }
+
+          // Remove our handlers so they don't leak across iterations.
+          rl.removeListener('close', onClose);
+          rl.removeListener('line', onLine);
+
+          resolve(mergeQuestionAnswerWithCapturedLines(answer, capturedLines));
+        }, PASTE_BURST_WINDOW_MS);
+      };
+
+      settlePasteBurst(capturedLines.length);
     });
   });
 }
@@ -209,6 +262,8 @@ async function runInteractive(agent: Agent, config: OCCCAConfig): Promise<void> 
   printConfig(config.model, config.baseUrl);
 
   const promptStr = getUserPromptString();
+  const composePromptStr = '... ';
+  const composeState: ComposeState = createComposeState();
 
   // Create single persistent readline instance for the entire session
   const rl = createReadline();
@@ -227,7 +282,8 @@ async function runInteractive(agent: Agent, config: OCCCAConfig): Promise<void> 
     while (true) {
       let input: string;
       try {
-        input = await question(rl, promptStr);
+        const activePrompt = composeState.active ? composePromptStr : promptStr;
+        input = await question(rl, activePrompt);
       } catch {
         console.log('');
         printInfo('Goodbye!');
@@ -235,21 +291,42 @@ async function runInteractive(agent: Agent, config: OCCCAConfig): Promise<void> 
       }
 
       const trimmed = input.trim();
-      if (!trimmed) continue;
+      if (!trimmed && !composeState.active) continue;
+
+      // Compose mode captures lines until explicit send/cancel commands.
+      const composeHandled = handleComposeInput(input, composeState);
+      if (composeHandled.kind === 'continue') {
+        // Provide mode-specific feedback for explicit control commands.
+        const composeControl = input.trim().toLowerCase();
+        if (composeControl === '/cancel') {
+          printInfo('Compose draft discarded.');
+        } else if (composeControl === '/send') {
+          printWarning('Compose draft is empty. Nothing to send.');
+        }
+        continue;
+      }
+      if (composeHandled.kind === 'submit') {
+        input = composeHandled.value;
+      }
+
+      const effectiveTrimmed = input.trim();
+      if (!effectiveTrimmed) {
+        continue;
+      }
 
       // Save to persistent history
-      saveHistoryLine(trimmed);
+      saveHistoryLine(effectiveTrimmed);
 
       // Handle slash commands — pass rl so interactive prompts can pause it
-      if (trimmed.startsWith('/')) {
-        const shouldExit = await handleCommand(trimmed, agent, config, rl);
+      if (effectiveTrimmed.startsWith('/')) {
+        const shouldExit = await handleCommand(effectiveTrimmed, agent, config, rl, composeState);
         if (shouldExit) break;
         continue;
       }
 
       // Handle shell escape (! prefix)
-      if (trimmed.startsWith('!')) {
-        const command = trimmed.slice(1).trim();
+      if (effectiveTrimmed.startsWith('!')) {
+        const command = effectiveTrimmed.slice(1).trim();
         const { executeBash } = await import('../tools/BashTool/index.js');
         const result = await executeBash({ command });
         console.log(result);
@@ -259,7 +336,7 @@ async function runInteractive(agent: Agent, config: OCCCAConfig): Promise<void> 
 
       // Run agent turn
       try {
-        await runAgentTurn(agent, trimmed);
+        await runAgentTurn(agent, effectiveTrimmed);
       } catch (err: any) {
         // Show both user-friendly and debug info so crashes are diagnosable
         printError(formatApiError(err));
@@ -274,6 +351,17 @@ async function runInteractive(agent: Agent, config: OCCCAConfig): Promise<void> 
   }
 
   process.exit(0);
+}
+
+/**
+ * Print compose-mode usage instructions for multiline drafting.
+ * Keeps help text close to mode entry for discoverability.
+ */
+function printComposeHelp(): void {
+  console.log('');
+  printInfo('Compose mode enabled.');
+  console.log('  Enter multi-line text safely without auto-submit.');
+  console.log('  Use /send to submit, or /cancel to discard.');
 }
 
 // ─── Agent Turn ─────────────────────────────────────────────────
@@ -732,6 +820,7 @@ async function handleCommand(
   agent: Agent,
   config: OCCCAConfig,
   rl?: readline.Interface,
+  composeState?: ComposeState,
 ): Promise<boolean> {
   const parts = input.split(/\s+/);
   const cmd = parts[0]!.toLowerCase();
@@ -779,6 +868,38 @@ async function handleCommand(
     case '/cost':
     case '/stats':
       printInfo(`Messages in context: ${agent.getMessageCount()}`);
+      return false;
+
+    case '/compose':
+      if (!composeState) {
+        printError('Compose state unavailable.');
+        return false;
+      }
+      if (composeState.active) {
+        printInfo('Compose mode is already active. Use /send or /cancel.');
+        return false;
+      }
+      composeState.active = true;
+      composeState.lines = [];
+      printComposeHelp();
+      return false;
+
+    case '/send':
+      if (composeState?.active) {
+        printInfo('Compose mode active: type your draft, then /send on a new line.');
+      } else {
+        printInfo('Use /compose first, then /send when your draft is ready.');
+      }
+      return false;
+
+    case '/cancel':
+      if (composeState?.active) {
+        composeState.active = false;
+        composeState.lines = [];
+        printInfo('Compose mode cancelled.');
+      } else {
+        printInfo('Compose mode is not active.');
+      }
       return false;
 
     case '/exit':

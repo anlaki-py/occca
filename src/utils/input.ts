@@ -104,8 +104,10 @@ export function listenForEscape(onEscape: () => void): () => void {
     process.stdin.setRawMode(true);
   }
 
-  const onKeypress = (_ch: string | undefined, key: { name?: string } | undefined) => {
-    if (key && key.name === 'escape') {
+  const onKeypress = (ch: string | undefined, key: { name?: string; sequence?: string } | undefined) => {
+    // Handle both parsed key names and raw escape sequence for Windows terminals
+    const isEscape = key?.name === 'escape' || key?.sequence === '\u001b' || ch === '\u001b';
+    if (isEscape) {
       cleanup();
       onEscape();
     }
@@ -125,4 +127,27 @@ export function listenForEscape(onEscape: () => void): () => void {
   process.stdin.on('keypress', onKeypress);
 
   return cleanup;
+}
+
+/**
+ * Merge readline question callback answer with captured line events.
+ * Readline emits the first submitted line in both places, and pasted
+ * multi-line input may emit additional `line` events in the same burst.
+ *
+ * @param answer - The string provided by readline.question callback
+ * @param capturedLines - All lines captured from readline's `line` events
+ * @returns Single logical user message, preserving multi-line paste
+ */
+export function mergeQuestionAnswerWithCapturedLines(answer: string, capturedLines: string[]): string {
+  if (capturedLines.length === 0) {
+    return answer;
+  }
+
+  // Normal case: callback answer equals first captured line
+  if (capturedLines[0] === answer) {
+    return capturedLines.join('\n');
+  }
+
+  // Defensive fallback for desynced ordering in specific terminals
+  return [answer, ...capturedLines].join('\n');
 }

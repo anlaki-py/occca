@@ -112,6 +112,9 @@ export function printHelp(): void {
     ['/mcp enable <name>', 'Enable an MCP server'],
     ['/mcp disable <name>', 'Disable an MCP server'],
     ['/cost',         'Show current session info'],
+    ['/compose',      'Enter multiline compose mode'],
+    ['/send',         'Send draft message in compose mode'],
+    ['/cancel',       'Discard compose draft / exit compose mode'],
     ['/exit',         'Exit OCCCA'],
     ['! <cmd>',       'Run a shell command inline'],
   ];
