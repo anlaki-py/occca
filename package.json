@@ -1,6 +1,6 @@
 {
   "name": "occca",
-  "version": "1.0.20",
+  "version": "1.0.21",
   "description": "OpenAI Compatible CLI Coding Agent - A minimal agentic coding CLI using OpenAI-compatible APIs",
   "type": "module",
   "main": "dist/entrypoints/cli.js",

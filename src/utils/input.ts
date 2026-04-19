@@ -130,6 +130,49 @@ export function listenForEscape(onEscape: () => void): () => void {
 }
 
 /**
+ * Set up cancellation listeners that trigger on Escape or Ctrl+C.
+ * Returns a cleanup function that removes both keypress and SIGINT hooks.
+ *
+ * @param onCancel - Callback invoked when cancellation keys are pressed
+ * @returns Cleanup function to stop listening
+ */
+export function listenForCancellation(onCancel: () => void): () => void {
+  let cleaned = false;
+
+  // Ensure keypress events are available on stdin.
+  readline.emitKeypressEvents(process.stdin);
+
+  const wasRaw = process.stdin.isRaw;
+  if (process.stdin.isTTY && !wasRaw) {
+    process.stdin.setRawMode(true);
+  }
+
+  const onKeypress = (
+    ch: string | undefined,
+    key: { name?: string; sequence?: string; ctrl?: boolean } | undefined,
+  ) => {
+    const isEscape = key?.name === 'escape' || key?.sequence === '\u001b' || ch === '\u001b';
+    const isCtrlC = key?.ctrl === true && key?.name === 'c';
+    if (isEscape || isCtrlC) {
+      cleanup();
+      onCancel();
+    }
+  };
+
+  const cleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
+    process.stdin.removeListener('keypress', onKeypress);
+    if (process.stdin.isTTY && wasRaw === false && process.stdin.isRaw) {
+      process.stdin.setRawMode(false);
+    }
+  };
+
+  process.stdin.on('keypress', onKeypress);
+  return cleanup;
+}
+
+/**
  * Merge readline question callback answer with captured line events.
  * Readline emits the first submitted line in both places, and pasted
  * multi-line input may emit additional `line` events in the same burst.

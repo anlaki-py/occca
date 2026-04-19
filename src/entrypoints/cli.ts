@@ -44,12 +44,11 @@ import {
   printCurrentModelInfo,
 } from '../components/modelDisplay.js';
 import {
-  listenForEscape,
+  listenForCancellation,
   askWithEscape,
   EscapeCancelledError,
   mergeQuestionAnswerWithCapturedLines,
 } from '../utils/input.js';
-import { createComposeState, handleComposeInput, type ComposeState } from '../utils/compose.js';
 import { initializeMcp, cleanupMcp, getMcpServerStatus, enableMcpServer, disableMcpServer } from '../mcp/index.js';
 
 // ─── CLI Argument Parsing ────────────────────────────────────────
@@ -78,9 +77,6 @@ const SLASH_COMMANDS = [
   '/model',
   '/mcp',
   '/cost',
-  '/compose',
-  '/send',
-  '/cancel',
   '/exit',
   '/quit',
 ];
@@ -182,6 +178,16 @@ function createReadline(): readline.Interface {
     rlAny.history.push(...history.reverse());
   }
 
+  // CRITICAL: Prevent readline from closing on Ctrl+C at the prompt.
+  // When terminal: true, readline emits its own 'SIGINT' event on Ctrl+C.
+  // Without a listener, it closes the interface by default, causing the
+  // REPL to exit. This listener clears the current line instead.
+  rl.on('SIGINT', () => {
+    // Clear the current line and re-prompt
+    rl.write(null, { ctrl: true, name: 'u' }); // Clear line
+    rl.prompt();
+  });
+
   return rl;
 }
 
@@ -217,6 +223,15 @@ function question(rl: readline.Interface, prompt: string): Promise<string> {
     }
     process.stdin.resume();
 
+    // Continuation prompt used after Alt+Enter for multiline drafting.
+    const CONTINUATION_PROMPT = '... ';
+
+    // Alt+Enter flag for the next submitted line.
+    let pendingAltEnter = false;
+
+    // Stores prior lines collected through Alt+Enter continuations.
+    const multilineBuffer: string[] = [];
+
     // Handler for unexpected readline closure (e.g. Ctrl+D / EOF)
     const onClose = () => reject(new Error('readline closed'));
     rl.once('close', onClose);
@@ -229,7 +244,26 @@ function question(rl: readline.Interface, prompt: string): Promise<string> {
     };
     rl.on('line', onLine);
 
-    rl.question(prompt, (answer) => {
+    const onKeypress = (
+      _ch: string | undefined,
+      key: { name?: string; meta?: boolean; alt?: boolean } | undefined,
+    ) => {
+      if (key?.name === 'return' && (key.meta === true || key.alt === true)) {
+        pendingAltEnter = true;
+      }
+    };
+    process.stdin.on('keypress', onKeypress);
+
+    let onFinalLine: (line: string) => void = () => {};
+
+    const cleanup = () => {
+      rl.removeListener('close', onClose);
+      rl.removeListener('line', onLine);
+      rl.removeListener('line', onFinalLine);
+      process.stdin.removeListener('keypress', onKeypress);
+    };
+
+    const finalizeAnswer = (answer: string) => {
       /**
        * Resolve the final answer only after the paste burst settles.
        * During this small window, additional line events are considered
@@ -242,16 +276,34 @@ function question(rl: readline.Interface, prompt: string): Promise<string> {
             return;
           }
 
-          // Remove our handlers so they don't leak across iterations.
-          rl.removeListener('close', onClose);
-          rl.removeListener('line', onLine);
-
-          resolve(mergeQuestionAnswerWithCapturedLines(answer, capturedLines));
+          cleanup();
+          const merged = mergeQuestionAnswerWithCapturedLines(answer, capturedLines);
+          if (multilineBuffer.length > 0) {
+            resolve([...multilineBuffer, merged].join('\n'));
+            return;
+          }
+          resolve(merged);
         }, PASTE_BURST_WINDOW_MS);
       };
-
       settlePasteBurst(capturedLines.length);
-    });
+    };
+
+    rl.setPrompt(prompt);
+    rl.prompt();
+
+    onFinalLine = (line: string) => {
+      if (pendingAltEnter) {
+        pendingAltEnter = false;
+        multilineBuffer.push(line);
+        capturedLines.length = 0;
+        rl.setPrompt(CONTINUATION_PROMPT);
+        rl.prompt();
+        return;
+      }
+
+      finalizeAnswer(line);
+    };
+    rl.on('line', onFinalLine);
   });
 }
 
@@ -262,11 +314,17 @@ async function runInteractive(agent: Agent, config: OCCCAConfig): Promise<void> 
   printConfig(config.model, config.baseUrl);
 
   const promptStr = getUserPromptString();
-  const composePromptStr = '... ';
-  const composeState: ComposeState = createComposeState();
-
   // Create single persistent readline instance for the entire session
   const rl = createReadline();
+  let cancelActiveTurn: (() => void) | null = null;
+  const onSigint = () => {
+    if (cancelActiveTurn) {
+      cancelActiveTurn();
+      return;
+    }
+    printInfo('Cancelled.');
+    rl.prompt();
+  };
 
   // KEEPALIVE: Prevent the Node.js event loop from draining if stdin's
   // internal handle state gets disrupted (e.g. after tool calls on Windows).
@@ -279,11 +337,17 @@ async function runInteractive(agent: Agent, config: OCCCAConfig): Promise<void> 
   }
 
   try {
+    /**
+     * Keep Ctrl+C non-destructive for the entire REPL lifecycle.
+     * If a model/tool turn is active, Ctrl+C aborts that work.
+     * If idle at prompt, Ctrl+C only clears the current input line.
+     */
+    process.on('SIGINT', onSigint);
+
     while (true) {
       let input: string;
       try {
-        const activePrompt = composeState.active ? composePromptStr : promptStr;
-        input = await question(rl, activePrompt);
+        input = await question(rl, promptStr);
       } catch {
         console.log('');
         printInfo('Goodbye!');
@@ -291,42 +355,21 @@ async function runInteractive(agent: Agent, config: OCCCAConfig): Promise<void> 
       }
 
       const trimmed = input.trim();
-      if (!trimmed && !composeState.active) continue;
-
-      // Compose mode captures lines until explicit send/cancel commands.
-      const composeHandled = handleComposeInput(input, composeState);
-      if (composeHandled.kind === 'continue') {
-        // Provide mode-specific feedback for explicit control commands.
-        const composeControl = input.trim().toLowerCase();
-        if (composeControl === '/cancel') {
-          printInfo('Compose draft discarded.');
-        } else if (composeControl === '/send') {
-          printWarning('Compose draft is empty. Nothing to send.');
-        }
-        continue;
-      }
-      if (composeHandled.kind === 'submit') {
-        input = composeHandled.value;
-      }
-
-      const effectiveTrimmed = input.trim();
-      if (!effectiveTrimmed) {
-        continue;
-      }
+      if (!trimmed) continue;
 
       // Save to persistent history
-      saveHistoryLine(effectiveTrimmed);
+      saveHistoryLine(trimmed);
 
       // Handle slash commands — pass rl so interactive prompts can pause it
-      if (effectiveTrimmed.startsWith('/')) {
-        const shouldExit = await handleCommand(effectiveTrimmed, agent, config, rl, composeState);
+      if (trimmed.startsWith('/')) {
+        const shouldExit = await handleCommand(trimmed, agent, config, rl);
         if (shouldExit) break;
         continue;
       }
 
       // Handle shell escape (! prefix)
-      if (effectiveTrimmed.startsWith('!')) {
-        const command = effectiveTrimmed.slice(1).trim();
+      if (trimmed.startsWith('!')) {
+        const command = trimmed.slice(1).trim();
         const { executeBash } = await import('../tools/BashTool/index.js');
         const result = await executeBash({ command });
         console.log(result);
@@ -336,16 +379,21 @@ async function runInteractive(agent: Agent, config: OCCCAConfig): Promise<void> 
 
       // Run agent turn
       try {
-        await runAgentTurn(agent, effectiveTrimmed);
+        await runAgentTurn(agent, trimmed, (cancelFn) => {
+          cancelActiveTurn = cancelFn;
+        });
       } catch (err: any) {
         // Show both user-friendly and debug info so crashes are diagnosable
         printError(formatApiError(err));
         if (err.stack && !err.message?.includes(err.stack)) {
           printError(`Debug: ${err.stack}`);
         }
+      } finally {
+        cancelActiveTurn = null;
       }
     }
   } finally {
+    process.removeListener('SIGINT', onSigint);
     clearInterval(keepalive);
     rl.close();
   }
@@ -353,26 +401,24 @@ async function runInteractive(agent: Agent, config: OCCCAConfig): Promise<void> 
   process.exit(0);
 }
 
-/**
- * Print compose-mode usage instructions for multiline drafting.
- * Keeps help text close to mode entry for discoverability.
- */
-function printComposeHelp(): void {
-  console.log('');
-  printInfo('Compose mode enabled.');
-  console.log('  Enter multi-line text safely without auto-submit.');
-  console.log('  Use /send to submit, or /cancel to discard.');
-}
-
 // ─── Agent Turn ─────────────────────────────────────────────────
 
-async function runAgentTurn(agent: Agent, input: string): Promise<void> {
+async function runAgentTurn(
+  agent: Agent,
+  input: string,
+  registerCancel: (cancelFn: () => void) => void,
+): Promise<void> {
   let hasStartedResponse = false;
   let fullResponse = '';
 
-  // Create an AbortController so the Escape key can cancel the stream
+  // Create an AbortController so Escape or Ctrl+C can cancel active work
   const controller = new AbortController();
-  const stopListening = listenForEscape(() => {
+  registerCancel(() => {
+    if (!controller.signal.aborted) {
+      controller.abort();
+    }
+  });
+  const stopListening = listenForCancellation(() => {
     controller.abort();
   });
 
@@ -820,7 +866,6 @@ async function handleCommand(
   agent: Agent,
   config: OCCCAConfig,
   rl?: readline.Interface,
-  composeState?: ComposeState,
 ): Promise<boolean> {
   const parts = input.split(/\s+/);
   const cmd = parts[0]!.toLowerCase();
@@ -868,38 +913,6 @@ async function handleCommand(
     case '/cost':
     case '/stats':
       printInfo(`Messages in context: ${agent.getMessageCount()}`);
-      return false;
-
-    case '/compose':
-      if (!composeState) {
-        printError('Compose state unavailable.');
-        return false;
-      }
-      if (composeState.active) {
-        printInfo('Compose mode is already active. Use /send or /cancel.');
-        return false;
-      }
-      composeState.active = true;
-      composeState.lines = [];
-      printComposeHelp();
-      return false;
-
-    case '/send':
-      if (composeState?.active) {
-        printInfo('Compose mode active: type your draft, then /send on a new line.');
-      } else {
-        printInfo('Use /compose first, then /send when your draft is ready.');
-      }
-      return false;
-
-    case '/cancel':
-      if (composeState?.active) {
-        composeState.active = false;
-        composeState.lines = [];
-        printInfo('Compose mode cancelled.');
-      } else {
-        printInfo('Compose mode is not active.');
-      }
       return false;
 
     case '/exit':
