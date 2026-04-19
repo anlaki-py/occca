@@ -44,7 +44,7 @@ import {
   printCurrentModelInfo,
 } from '../components/modelDisplay.js';
 import { listenForEscape, askWithEscape, EscapeCancelledError } from '../utils/input.js';
-import { initializeMcp, cleanupMcp } from '../mcp/index.js';
+import { initializeMcp, cleanupMcp, getMcpServerStatus, enableMcpServer, disableMcpServer } from '../mcp/index.js';
 
 // ─── CLI Argument Parsing ────────────────────────────────────────
 
@@ -63,7 +63,7 @@ const opts = program.opts();
 
 // ─── Slash commands ──────────────────────────────────────────────
 
-const SLASH_COMMANDS = ['/help', '/config', '/clear', '/new', '/compact', '/model', '/cost', '/exit', '/quit'];
+const SLASH_COMMANDS = ['/help', '/config', '/clear', '/new', '/compact', '/model', '/mcp', '/cost', '/exit', '/quit'];
 
 // ─── Main ────────────────────────────────────────────────────────
 
@@ -597,6 +597,130 @@ function applyActiveModel(config: OCCCAConfig, agent: Agent): void {
   agent.updateConfig(config, getActiveApiKeys());
 }
 
+// ─── MCP Commands ────────────────────────────────────────────────
+
+/**
+ * Handle /mcp command and its subcommands.
+ * @param arg - Subcommand (enable, disable) or empty for status
+ */
+async function handleMcpCommand(arg: string): Promise<void> {
+  const { c } = await import('../utils/theme.js');
+  const parts = arg.trim().split(/\s+/);
+  const subcommand = parts[0]?.toLowerCase() || '';
+  const serverName = parts.slice(1).join(' ').trim();
+
+  // No subcommand - show status
+  if (!subcommand) {
+    const servers = getMcpServerStatus();
+    
+    if (servers.length === 0) {
+        printInfo('No MCP servers configured.');
+        console.log('');
+        console.log('  Create a ~/.occca/mcp.json file to configure MCP servers.');
+        console.log('');
+        console.log(c.inactive('  Example mcp.json:'));
+        console.log('');
+        console.log(c.text('  {'));
+        console.log(c.text('    "mcpServers": {'));
+        console.log(c.text('      "my-server": {'));
+        console.log(c.text('        "command": "npx",'));
+        console.log(c.text('        "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path"]'));
+        console.log(c.text('      }'));
+        console.log(c.text('    }'));
+        console.log(c.text('  }'));
+        console.log('');
+        return;
+      }
+
+    console.log('');
+    console.log(c.brand('  MCP Servers'));
+    console.log(c.inactive('  ────────────'));
+    
+    for (const server of servers) {
+      const statusColor = 
+        server.status === 'connected' ? c.success :
+        server.status === 'disabled' ? c.inactive :
+        server.status === 'failed' ? c.error :
+        c.warning;
+      
+      const statusLabel = server.status === 'connected' ? 'connected' :
+                          server.status === 'failed' ? 'failed' :
+                          server.status === 'disabled' ? 'disabled' :
+                          'disconnected';
+      
+      console.log(`  ${statusColor('●')} ${c.text(server.name.padEnd(20))} ${c.inactive(statusLabel)}`);
+    }
+    console.log('');
+    return;
+  }
+
+  // Enable command
+  if (subcommand === 'enable') {
+    if (!serverName) {
+      printWarning('Usage: /mcp enable <server_name>');
+      return;
+    }
+    
+    const servers = getMcpServerStatus();
+    const server = servers.find(s => s.name === serverName);
+    
+    if (!server) {
+      printError(`No MCP server named "${serverName}".`);
+      printInfo('Available servers: ' + servers.map(s => s.name).join(', '));
+      return;
+    }
+    
+    if (server.status === 'connected') {
+      printInfo(`Server "${serverName}" is already connected.`);
+      return;
+    }
+    
+    printInfo(`Enabling "${serverName}"...`);
+    const success = await enableMcpServer(serverName);
+    
+    if (success) {
+      printSuccess(`Server "${serverName}" enabled and connected.`);
+    } else {
+      printError(`Failed to enable "${serverName}".`);
+    }
+    return;
+  }
+
+  // Disable command
+  if (subcommand === 'disable') {
+    if (!serverName) {
+      printWarning('Usage: /mcp disable <server_name>');
+      return;
+    }
+    
+    const servers = getMcpServerStatus();
+    const server = servers.find(s => s.name === serverName);
+    
+    if (!server) {
+      printError(`No MCP server named "${serverName}".`);
+      printInfo('Available servers: ' + servers.map(s => s.name).join(', '));
+      return;
+    }
+    
+    if (server.status === 'disabled') {
+      printInfo(`Server "${serverName}" is already disabled.`);
+      return;
+    }
+    
+    const success = await disableMcpServer(serverName);
+    
+    if (success) {
+      printSuccess(`Server "${serverName}" disabled.`);
+    } else {
+      printError(`Failed to disable "${serverName}".`);
+    }
+    return;
+  }
+
+  printWarning(`Unknown /mcp subcommand: ${subcommand}`);
+  printInfo('Usage: /mcp [enable|disable] <server_name>');
+}
+
 // ─── Slash Commands ─────────────────────────────────────────────
 
 /**
@@ -639,6 +763,11 @@ async function handleCommand(
 
     case '/model': {
       await handleModelCommand(arg, config, agent, rl);
+      return false;
+    }
+
+    case '/mcp': {
+      await handleMcpCommand(arg);
       return false;
     }
 

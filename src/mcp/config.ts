@@ -1,9 +1,9 @@
 // MCP Config -- Load MCP server configurations from mcp.json
 
-import { readFile, access } from 'fs/promises';
+import { readFile, access, writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
 import { homedir } from 'os';
-import { McpJsonConfigSchema, type McpServerConfig, type McpJsonConfig } from './types.js';
+import { McpJsonConfigSchema, type McpServerConfig } from './types.js';
 
 /**
  * Get the path to the global MCP config file (~/.occca/mcp.json).
@@ -11,6 +11,53 @@ import { McpJsonConfigSchema, type McpServerConfig, type McpJsonConfig } from '.
  */
 export function getGlobalMcpConfigPath(): string {
   return join(homedir(), '.occca', 'mcp.json');
+}
+
+/**
+ * Get the path to the MCP preferences file (~/.occca/mcp-preferences.json).
+ * @returns Absolute path to the MCP preferences file
+ */
+export function getMcpPreferencesPath(): string {
+  return join(homedir(), '.occca', 'mcp-preferences.json');
+}
+
+/**
+ * MCP preferences structure
+ */
+export interface McpPreferences {
+  disabledServers: string[];
+}
+
+/**
+ * Load MCP preferences (disabled servers, etc.)
+ * @returns McpPreferences object
+ */
+export async function loadMcpPreferences(): Promise<McpPreferences> {
+  const prefsPath = getMcpPreferencesPath();
+
+  try {
+    const content = await readFile(prefsPath, 'utf-8');
+    const parsed = JSON.parse(content);
+    return {
+      disabledServers: Array.isArray(parsed.disabledServers) ? parsed.disabledServers : [],
+    };
+  } catch {
+    return { disabledServers: [] };
+  }
+}
+
+/**
+ * Save MCP preferences.
+ * @param prefs - The preferences to save
+ */
+export async function saveMcpPreferences(prefs: McpPreferences): Promise<void> {
+  const prefsPath = getMcpPreferencesPath();
+  const configDir = join(homedir(), '.occca');
+
+  // Ensure directory exists
+  await mkdir(configDir, { recursive: true });
+
+  await writeFile(prefsPath, JSON.stringify(prefs, null, 2), 'utf-8');
 }
 
 /**
@@ -23,17 +70,17 @@ export async function getMcpConfigPath(): Promise<{ path: string; scope: 'projec
   // Check project-local mcp.json first
   const cwd = process.cwd();
   const projectPath = join(cwd, 'mcp.json');
-  
+
   try {
     await access(projectPath);
     return { path: projectPath, scope: 'project' };
   } catch {
     // Not found in project, check global
   }
-  
+
   // Check global mcp.json
   const globalPath = getGlobalMcpConfigPath();
-  
+
   try {
     await access(globalPath);
     return { path: globalPath, scope: 'global' };
@@ -45,25 +92,25 @@ export async function getMcpConfigPath(): Promise<{ path: string; scope: 'projec
 
 /**
  * Load MCP server configurations from mcp.json.
- * Checks project-local mcp.json first, then falls back to ~/.occca/mcp.json.
+ * Checks project-local mcp.json first, then falls back to ~/.occa/mcp.json.
  * @returns Object mapping server names to their configurations
  */
 export async function loadMcpConfig(): Promise<Record<string, McpServerConfig>> {
   const configInfo = await getMcpConfigPath();
-  
+
   if (!configInfo) {
     return {};
   }
-  
+
   const { path: configPath, scope } = configInfo;
-  
+
   try {
     const content = await readFile(configPath, 'utf-8');
     const parsed = JSON.parse(content);
-    
+
     // Validate the config
     const result = McpJsonConfigSchema.safeParse(parsed);
-    
+
     if (!result.success) {
       console.error('[MCP] Invalid mcp.json configuration:');
       for (const issue of result.error.issues) {
@@ -71,14 +118,14 @@ export async function loadMcpConfig(): Promise<Record<string, McpServerConfig>> 
       }
       return {};
     }
-    
+
     const serverCount = Object.keys(result.data.mcpServers).length;
     const scopeLabel = scope === 'project' ? 'project' : 'global';
     console.log(`[MCP] Loaded ${serverCount} server(s) from ${scopeLabel} config: ${configPath}`);
-    
+
     // Expand environment variables in config values
     const expanded = expandEnvVars(result.data.mcpServers);
-    
+
     return expanded;
   } catch (error) {
     console.error(`[MCP] Failed to load mcp.json: ${error}`);
@@ -94,11 +141,11 @@ function expandEnvVars(
   servers: Record<string, McpServerConfig>
 ): Record<string, McpServerConfig> {
   const expanded: Record<string, McpServerConfig> = {};
-  
+
   for (const [name, config] of Object.entries(servers)) {
     expanded[name] = expandConfigEnvVars(config);
   }
-  
+
   return expanded;
 }
 

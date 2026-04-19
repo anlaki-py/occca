@@ -19,13 +19,19 @@ import type {
   MCPServerConnection,
   McpToolDefinition,
 } from './types.js';
-import { loadMcpConfig } from './config.js';
+import { loadMcpConfig, loadMcpPreferences, saveMcpPreferences } from './config.js';
 
 // Store for connected MCP servers
 const connections: Map<string, MCPServerConnection> = new Map();
 
 // Store for discovered MCP tools
 const mcpTools: Map<string, { serverName: string; tool: McpToolDefinition }> = new Map();
+
+// Store for disabled server names
+const disabledServers: Set<string> = new Set();
+
+// Store for all server configs (for reconnection)
+let allServerConfigs: Record<string, McpServerConfig> = {};
 
 /**
  * Get all connected MCP servers.
@@ -47,16 +53,32 @@ export function getMcpTools(): Array<{ serverName: string; tool: McpToolDefiniti
  */
 export async function initializeMcp(): Promise<void> {
   const configs = await loadMcpConfig();
-  
+  allServerConfigs = configs;
+
   if (Object.keys(configs).length === 0) {
     return;
   }
-  
+
+  // Load preferences to get disabled servers
+  const prefs = await loadMcpPreferences();
+  for (const name of prefs.disabledServers) {
+    if (configs[name]) {
+      disabledServers.add(name);
+    }
+  }
+
   console.log(`[MCP] Found ${Object.keys(configs).length} server(s) in mcp.json`);
-  
-  // Connect to all servers in parallel
+
+  // Connect to all non-disabled servers in parallel
+  const serversToConnect = Object.entries(configs).filter(([name]) => !disabledServers.has(name));
+
+  if (serversToConnect.length === 0) {
+    console.log('[MCP] All servers are disabled');
+    return;
+  }
+
   const results = await Promise.allSettled(
-    Object.entries(configs).map(async ([name, config]) => {
+    serversToConnect.map(async ([name, config]) => {
       try {
         const connection = await connectToServer(name, config);
         connections.set(name, connection);
@@ -76,7 +98,7 @@ export async function initializeMcp(): Promise<void> {
       }
     })
   );
-  
+
   // Collect failed connections
   for (const result of results) {
     if (result.status === 'fulfilled' && result.value) {
@@ -86,7 +108,7 @@ export async function initializeMcp(): Promise<void> {
       }
     }
   }
-  
+
   // Fetch tools from all connected servers in parallel
   await discoverTools();
 }
@@ -315,4 +337,135 @@ export async function cleanupMcp(): Promise<void> {
   await Promise.allSettled(cleanupPromises);
   connections.clear();
   mcpTools.clear();
+}
+
+/**
+ * Get all server configs (for status display).
+ */
+export function getAllServerConfigs(): Record<string, McpServerConfig> {
+  return allServerConfigs;
+}
+
+/**
+ * Get the status of all MCP servers.
+ */
+export function getMcpServerStatus(): Array<{ name: string; status: string; config: McpServerConfig }> {
+  const result: Array<{ name: string; status: string; config: McpServerConfig }> = [];
+  
+  for (const [name, config] of Object.entries(allServerConfigs)) {
+    let status: string;
+    
+    if (disabledServers.has(name)) {
+      status = 'disabled';
+    } else {
+      const connection = connections.get(name);
+      if (!connection) {
+        status = 'disconnected';
+      } else {
+        status = connection.type;
+      }
+    }
+    
+    result.push({ name, status, config });
+  }
+  
+  return result;
+}
+
+/**
+ * Enable a disabled MCP server.
+ */
+export async function enableMcpServer(name: string): Promise<boolean> {
+  if (!allServerConfigs[name]) {
+    return false;
+  }
+  
+  if (!disabledServers.has(name)) {
+    return true; // Already enabled
+  }
+  
+  disabledServers.delete(name);
+
+  // Save preferences
+  await saveMcpPreferences({ disabledServers: Array.from(disabledServers) });
+
+  // Connect to the server
+  const config = allServerConfigs[name]!;
+  try {
+    const connection = await connectToServer(name, config);
+    connections.set(name, connection);
+    
+    // Discover tools from this server
+    if (connection.type === 'connected') {
+      try {
+        const result = await connection.client.request(
+          { method: 'tools/list' },
+          ListToolsResultSchema
+        );
+        
+        for (const tool of result.tools) {
+          const fullName = `mcp__${name}__${tool.name}`;
+          mcpTools.set(fullName, {
+            serverName: name,
+            tool: {
+              name: tool.name,
+              description: tool.description,
+              inputSchema: tool.inputSchema as McpToolDefinition['inputSchema'],
+            },
+          });
+        }
+        
+        console.log(`[MCP] Enabled "${name}" - discovered ${result.tools.length} tool(s)`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`[MCP] Failed to fetch tools from "${name}": ${message}`);
+      }
+    }
+    
+    return true;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[MCP] Failed to enable "${name}": ${message}`);
+    connections.set(name, {
+      name,
+      type: 'failed',
+      config,
+      error: message,
+    });
+    return false;
+  }
+}
+
+/**
+ * Disable an MCP server.
+ */
+export async function disableMcpServer(name: string): Promise<boolean> {
+  if (!allServerConfigs[name]) {
+    return false;
+  }
+  
+  // Disconnect if connected
+  const connection = connections.get(name);
+  if (connection && connection.type === 'connected') {
+    await connection.cleanup();
+  }
+  
+  // Remove from connections
+  connections.delete(name);
+  
+  // Remove tools from this server
+  for (const [toolName, toolInfo] of mcpTools) {
+    if (toolInfo.serverName === name) {
+      mcpTools.delete(toolName);
+    }
+  }
+  
+  // Mark as disabled
+  disabledServers.add(name);
+
+  // Save preferences
+  await saveMcpPreferences({ disabledServers: Array.from(disabledServers) });
+
+  console.log(`[MCP] Disabled "${name}"`);
+  return true;
 }
