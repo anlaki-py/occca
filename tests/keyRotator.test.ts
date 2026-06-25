@@ -16,11 +16,6 @@ describe('KeyRotator', () => {
     expect(new KeyRotator(['key-a', 'key-b']).hasAlternativeKeys()).toBe(true);
   });
 
-  it('should report correct key count', () => {
-    expect(new KeyRotator(['a', 'b', 'c']).getKeyCount()).toBe(3);
-    expect(new KeyRotator(['a']).getKeyCount()).toBe(1);
-  });
-
   // ─── Rotation ────────────────────────────────────────────────
 
   it('should rotate to the next key when current is rate-limited', () => {
@@ -36,19 +31,21 @@ describe('KeyRotator', () => {
   });
 
   it('should wrap around when rotating past the last key', () => {
+    vi.useFakeTimers();
     const rotator = new KeyRotator(['key-a', 'key-b', 'key-c']);
 
-    // Manually set to the last key by marking first two and rotating
+    // Move to key-c by marking a and b then rotating
     rotator.markRateLimited('key-a');
     rotator.markRateLimited('key-b');
     const next = rotator.rotate();
     expect(next).toBe('key-c');
 
-    // Now mark key-c and let cooldowns expire for key-a
-    rotator.resetKey('key-a');
+    // Mark key-c and advance past cooldown so key-a becomes available
     rotator.markRateLimited('key-c');
+    vi.advanceTimersByTime(61_000);
     const wrapped = rotator.rotate();
     expect(wrapped).toBe('key-a');
+    vi.useRealTimers();
   });
 
   it('should return null when all keys are rate-limited', () => {
@@ -110,22 +107,6 @@ describe('KeyRotator', () => {
     vi.useRealTimers();
   });
 
-  // ─── resetKey ────────────────────────────────────────────────
-
-  it('should manually reset a rate-limited key', () => {
-    const rotator = new KeyRotator(['key-a', 'key-b']);
-
-    rotator.markRateLimited('key-a');
-    rotator.markRateLimited('key-b');
-
-    // Reset key-a manually
-    rotator.resetKey('key-a');
-
-    // key-a should now be available
-    const result = rotator.rotate();
-    expect(result).toBe('key-a');
-  });
-
   // ─── updateKeys ──────────────────────────────────────────────
 
   it('should update the key pool while preserving existing state', () => {
@@ -135,7 +116,6 @@ describe('KeyRotator', () => {
     // Update pool: keep key-a (rate-limited), add key-c
     rotator.updateKeys(['key-a', 'key-c']);
 
-    expect(rotator.getKeyCount()).toBe(2);
     // key-a is still rate-limited, so rotate should pick key-c
     const next = rotator.rotate();
     expect(next).toBe('key-c');
@@ -152,7 +132,6 @@ describe('KeyRotator', () => {
     // Shrink pool to just key-a
     rotator.updateKeys(['key-a']);
     expect(rotator.getCurrentKey()).toBe('key-a');
-    expect(rotator.getKeyCount()).toBe(1);
   });
 
   it('should clean state for removed keys during updateKeys', () => {

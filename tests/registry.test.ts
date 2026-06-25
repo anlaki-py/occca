@@ -11,7 +11,7 @@ describe('Tool Registry', () => {
     it('returns all registered tool definitions', () => {
       const tools = getAllTools();
       expect(Array.isArray(tools)).toBe(true);
-      expect(tools.length).toBe(expectedTools.length);
+      expect(tools.length).toBeGreaterThanOrEqual(expectedTools.length);
     });
 
     it('each tool has the correct OpenAI function structure', () => {

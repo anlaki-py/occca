@@ -33,19 +33,11 @@ export function getUserPromptString(): string {
   return c.brand(`\n${TOOL_ARROW} `);
 }
 
-export function printUserPrompt(): void {
-  process.stdout.write(getUserPromptString());
-}
-
 // ─── Assistant Messages ──────────────────────────────────────────
 
 export function printAssistantLabel(): void {
   console.log('');
   console.log(c.brand(`  ${BULLET} `) + chalk.bold.white(PRODUCT_NAME));
-}
-
-export function printToken(token: string): void {
-  process.stdout.write(token);
 }
 
 export function finishAssistantMessage(): void {
@@ -125,7 +117,7 @@ export function printHelp(): void {
   const vars = [
     ['OPENAI_API_KEY', 'Your API key'],
     ['OPENAI_BASE_URL', 'API base URL (for custom providers)'],
-    ['OCCCA_MODEL', 'Model to use (default: gpt-4o)'],
+    ['OCCCA_MODEL', 'Model to use (default: gpt-5)'],
     ['OCCCA_TEMPERATURE', 'Sampling temperature (default: 0)'],
   ];
   for (const [name, desc] of vars) {

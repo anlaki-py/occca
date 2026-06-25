@@ -3,16 +3,9 @@
 // and the normalizePath logic for Windows compatibility.
 
 import { describe, it, expect, beforeAll } from 'vitest';
-import { isInsideGitRepo, isPathGitignored, batchCheckIgnored } from '../src/utils/gitignore.js';
+import { isPathGitignored, batchCheckIgnored } from '../src/utils/gitignore.js';
 import { getCwd } from '../src/utils/helpers.js';
 import path from 'path';
-
-describe('isInsideGitRepo', () => {
-  it('returns true when cwd is inside a git repository', () => {
-    // OCCCA project root is a git repo
-    expect(isInsideGitRepo()).toBe(true);
-  });
-});
 
 describe('isPathGitignored', () => {
   const cwd = getCwd();

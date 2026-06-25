@@ -33,8 +33,11 @@ Usage:
   },
 };
 
-export async function executeFileWrite(args: Record<string, unknown>, _signal?: AbortSignal): Promise<string> {
+export async function executeFileWrite(args: Record<string, unknown>, signal?: AbortSignal): Promise<string> {
   const filePath = resolveFilePath(String(args.file_path || ''));
+
+  if (signal?.aborted) return '[Cancelled]';
+
   const content = String(args.content ?? '');
 
   try {

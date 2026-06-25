@@ -5,15 +5,6 @@ import { execFile, execFileSync } from 'child_process';
 import { getCwd, getIsGit } from './helpers.js';
 
 /**
- * Checks whether the current working directory is inside a git repository.
- * Thin wrapper around getIsGit() for semantic clarity in calling code.
- * @returns true if cwd is inside a git work tree
- */
-export function isInsideGitRepo(): boolean {
-  return getIsGit();
-}
-
-/**
  * Checks if a single file path is ignored by .gitignore rules.
  * Uses `git check-ignore` which correctly handles nested .gitignore
  * files, global git configuration, and all gitignore pattern syntax.

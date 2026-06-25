@@ -130,7 +130,7 @@ export function showToolStart(toolName: string, args: Record<string, unknown>): 
     prefixText: '',
     spinner: {
       interval: SPINNER_INTERVAL,
-      frames: SPINNER_FRAMES as unknown as string[],
+      frames: SPINNER_FRAMES,
     },
     color: 'yellow',
   }).start();
@@ -173,13 +173,4 @@ export function showToolEnd(toolName: string, result: string): void {
   }
 }
 
-export function showToolError(toolName: string, error: string): void {
-  if (activeSpinner) {
-    const color = getToolColor(toolName);
-    activeSpinner.stopAndPersist({
-      symbol: c.error(` ${CROSS}`),
-      text: color(`  ${toolName}`) + c.inactive(`  ${error}`),
-    });
-    activeSpinner = null;
-  }
-}
+

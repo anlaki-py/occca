@@ -39,9 +39,12 @@ Usage:
   },
 };
 
-export async function executeFileRead(args: Record<string, unknown>, _signal?: AbortSignal): Promise<string> {
+export async function executeFileRead(args: Record<string, unknown>, signal?: AbortSignal): Promise<string> {
   const filePath = resolveFilePath(String(args.file_path || ''));
   const offset = Math.max(1, Number(args.offset) || 1);
+
+  if (signal?.aborted) return '[Cancelled]';
+
   const limit = Number(args.limit) || MAX_LINES;
 
   try {

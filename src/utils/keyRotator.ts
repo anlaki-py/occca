@@ -87,17 +87,6 @@ export class KeyRotator {
   }
 
   /**
-   * Manually reset a specific key's rate-limit state.
-   * @param key - The API key string to un-flag
-   */
-  resetKey(key: string): void {
-    const state = this.keys.find(k => k.key === key);
-    if (state) {
-      state.rateLimitedAt = null;
-    }
-  }
-
-  /**
    * Hot-update the key pool (e.g. after /config changes).
    * Preserves rate-limit state for keys that still exist.
    * @param apiKeys - New set of API key strings
@@ -117,8 +106,4 @@ export class KeyRotator {
     }
   }
 
-  /** @returns Total number of keys in the pool */
-  getKeyCount(): number {
-    return this.keys.length;
-  }
 }

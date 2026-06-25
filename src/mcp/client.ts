@@ -205,35 +205,41 @@ async function createTransport(config: McpServerConfig): Promise<Transport> {
 }
 
 /**
+ * Register tools discovered from a server into the mcpTools map.
+ */
+async function registerServerTools(name: string, connection: ConnectedMCPServer): Promise<void> {
+  try {
+    const result = await connection.client.request(
+      { method: 'tools/list' },
+      ListToolsResultSchema
+    );
+
+    for (const tool of result.tools) {
+      const fullName = `mcp__${name}__${tool.name}`;
+      mcpTools.set(fullName, {
+        serverName: name,
+        tool: {
+          name: tool.name,
+          description: tool.description,
+          inputSchema: tool.inputSchema as McpToolDefinition['inputSchema'],
+        },
+      });
+    }
+
+    console.log(`[MCP] Discovered ${result.tools.length} tool(s) from "${name}"`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[MCP] Failed to fetch tools from "${name}": ${message}`);
+  }
+}
+
+/**
  * Discover tools from all connected servers.
  */
 async function discoverTools(): Promise<void> {
   for (const [name, connection] of connections) {
     if (connection.type !== 'connected') continue;
-    
-    try {
-      const result = await connection.client.request(
-        { method: 'tools/list' },
-        ListToolsResultSchema
-      );
-      
-      for (const tool of result.tools) {
-        const fullName = `mcp__${name}__${tool.name}`;
-        mcpTools.set(fullName, {
-          serverName: name,
-          tool: {
-            name: tool.name,
-            description: tool.description,
-            inputSchema: tool.inputSchema as McpToolDefinition['inputSchema'],
-          },
-        });
-      }
-      
-      console.log(`[MCP] Discovered ${result.tools.length} tool(s) from "${name}"`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error(`[MCP] Failed to fetch tools from "${name}": ${message}`);
-    }
+    await registerServerTools(name, connection);
   }
 }
 
@@ -340,13 +346,6 @@ export async function cleanupMcp(): Promise<void> {
 }
 
 /**
- * Get all server configs (for status display).
- */
-export function getAllServerConfigs(): Record<string, McpServerConfig> {
-  return allServerConfigs;
-}
-
-/**
  * Get the status of all MCP servers.
  */
 export function getMcpServerStatus(): Array<{ name: string; status: string; config: McpServerConfig }> {
@@ -397,29 +396,7 @@ export async function enableMcpServer(name: string): Promise<boolean> {
     
     // Discover tools from this server
     if (connection.type === 'connected') {
-      try {
-        const result = await connection.client.request(
-          { method: 'tools/list' },
-          ListToolsResultSchema
-        );
-        
-        for (const tool of result.tools) {
-          const fullName = `mcp__${name}__${tool.name}`;
-          mcpTools.set(fullName, {
-            serverName: name,
-            tool: {
-              name: tool.name,
-              description: tool.description,
-              inputSchema: tool.inputSchema as McpToolDefinition['inputSchema'],
-            },
-          });
-        }
-        
-        console.log(`[MCP] Enabled "${name}" - discovered ${result.tools.length} tool(s)`);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        console.error(`[MCP] Failed to fetch tools from "${name}": ${message}`);
-      }
+      await registerServerTools(name, connection);
     }
     
     return true;

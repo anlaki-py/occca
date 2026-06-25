@@ -44,7 +44,7 @@ Usage:
  * @param args - { pattern, path?, include? }
  * @returns formatted search results or error message
  */
-export async function executeGrep(args: Record<string, unknown>, _signal?: AbortSignal): Promise<string> {
+export async function executeGrep(args: Record<string, unknown>, signal?: AbortSignal): Promise<string> {
   const pattern = String(args.pattern || '');
   const searchPath = args.path ? String(args.path) : getCwd();
   const include = args.include ? String(args.include) : undefined;
@@ -53,22 +53,17 @@ export async function executeGrep(args: Record<string, unknown>, _signal?: Abort
     return 'Error: No search pattern provided.';
   }
 
+  if (signal?.aborted) return '[Cancelled]';
+
   return new Promise((resolve) => {
     const isWindows = process.platform === 'win32';
     const escapedPattern = pattern.replace(/"/g, '\\"');
 
-    // Security exclusions applied to every search
-    // Args are like ['--glob', '!.git/**', '--glob', '!.bashrc', ...]
-    // They must NOT be individually quoted — --glob must be a raw flag
     const securityArgs = getSecurityRipgrepArgs();
     const securityFlags = securityArgs.join(' ');
 
-    // Build the include filter if specified
     const includeArg = include ? `--glob "${include}"` : '';
 
-    // --hidden: search dotfiles (e.g. .env) unless they're gitignored
-    // No --no-ignore: ripgrep respects .gitignore by default (clean search)
-    // Security globs: always exclude dangerous files/dirs
     let command: string;
     if (isWindows) {
       command = `rg --no-heading --line-number --color never --hidden ${includeArg} ${securityFlags} "${escapedPattern}" "${searchPath}" 2>nul || findstr /S /N /R "${escapedPattern}" "${searchPath}\\*"`;
@@ -76,7 +71,7 @@ export async function executeGrep(args: Record<string, unknown>, _signal?: Abort
       command = `rg --no-heading --line-number --color never --hidden ${includeArg} ${securityFlags} "${escapedPattern}" "${searchPath}" 2>/dev/null || grep -rnI ${include ? `--include="${include}"` : ''} "${escapedPattern}" "${searchPath}"`;
     }
 
-    exec(
+    const child = exec(
       command,
       {
         cwd: getCwd(),
@@ -100,7 +95,6 @@ export async function executeGrep(args: Record<string, unknown>, _signal?: Abort
           return;
         }
 
-        // Cap output at 200 lines to keep results manageable
         const lines = output.split('\n');
         const matchCount = lines.length;
         const maxLines = 200;
@@ -117,5 +111,15 @@ export async function executeGrep(args: Record<string, unknown>, _signal?: Abort
         resolve(truncateOutput(result));
       }
     );
+
+    if (signal) {
+      const onAbort = () => {
+        child.kill('SIGTERM');
+        setTimeout(() => {
+          if (!child.killed) child.kill('SIGKILL');
+        }, 100);
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+    }
   });
 }

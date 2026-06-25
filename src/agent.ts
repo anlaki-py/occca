@@ -114,6 +114,7 @@ export class Agent {
    * @returns true if the error indicates rate limiting
    */
   private isRateLimitError(err: any): boolean {
+    if (!err) return false;
     const msg = err.message || '';
     return err.status === 429 || msg.includes('429') || msg.includes('rate limit') || msg.includes('Rate limit');
   }
@@ -125,6 +126,7 @@ export class Agent {
    * @returns true if the error should not be retried
    */
   private isNonRetryable(err: any): boolean {
+    if (!err) return false;
     const msg = err.message || '';
     // 401 Unauthorized — bad API key
     if (err.status === 401 || msg.includes('401') || msg.includes('Unauthorized')) return true;
@@ -422,18 +424,13 @@ export class Agent {
   }
 
   /**
-   * Safely invoke onComplete — if the callback throws (e.g. from
-   * markdown rendering), log the error instead of crashing.
+   * Safely invoke onComplete — if the callback throws, log and suppress.
    */
   private safeComplete(callbacks: AgentCallbacks): void {
     try {
       callbacks.onComplete();
-    } catch (err: any) {
-      try {
-        callbacks.onError(err instanceof Error ? err : new Error(String(err)));
-      } catch {
-        console.error('[OCCCA] Error in onComplete callback:', err);
-      }
+    } catch {
+      console.error('[OCCCA] Error in onComplete callback');
     }
   }
 }

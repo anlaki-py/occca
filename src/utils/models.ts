@@ -2,11 +2,10 @@
 
 import fs from 'fs';
 import path from 'path';
-import os from 'os';
 import crypto from 'crypto';
 import type { ModelProfile, ModelsConfig, OCCCAConfig } from '../types/index.js';
+import { CONFIG_DIR } from './paths.js';
 
-const CONFIG_DIR = path.join(os.homedir(), '.occca');
 const MODELS_FILE = path.join(CONFIG_DIR, 'models.json');
 const LEGACY_CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
 

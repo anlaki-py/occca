@@ -1,9 +1,7 @@
 // MCP Tool -- Wrapper for MCP server tools
 
 import type OpenAI from 'openai';
-import type { ToolFunction } from '../../types/index.js';
 import { callMcpTool, parseMcpToolName, getMcpTools, getServer } from '../../mcp/client.js';
-import type { McpToolDefinition } from '../../mcp/types.js';
 
 /**
  * Build OpenAI tool definitions from all discovered MCP tools.
@@ -50,9 +48,6 @@ export async function executeMcpTool(
     throw new Error(`MCP server "${serverName}" failed to connect: ${server.error || 'Unknown error'}`);
   }
   
-  if (server.type === 'pending') {
-    throw new Error(`MCP server "${serverName}" is still connecting. Please try again in a moment.`);
-  }
   
   if (server.type === 'disabled') {
     throw new Error(`MCP server "${serverName}" is disabled.`);

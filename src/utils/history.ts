@@ -3,9 +3,9 @@
 
 import fs from 'fs';
 import path from 'path';
-import os from 'os';
+import { CONFIG_DIR } from './paths.js';
 
-const HISTORY_FILE = path.join(os.homedir(), '.occca', 'history');
+const HISTORY_FILE = path.join(CONFIG_DIR, 'history');
 const MAX_HISTORY_LINES = 1000;
 
 export function loadHistory(): string[] {

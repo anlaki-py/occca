@@ -2,7 +2,8 @@ import fs from 'fs';
 import path from 'path';
 import type OpenAI from 'openai';
 import { resolveFilePath } from '../../utils/helpers.js';
-import { isInsideGitRepo, batchCheckIgnored } from '../../utils/gitignore.js';
+import { getIsGit } from '../../utils/helpers.js';
+import { batchCheckIgnored } from '../../utils/gitignore.js';
 import { DANGEROUS_DIRECTORIES } from '../../constants/security.js';
 
 export const listDirTool: OpenAI.Chat.Completions.ChatCompletionTool = {
@@ -43,8 +44,10 @@ function formatSize(bytes: number): string {
  * @param args - { path: string }
  * @returns formatted directory listing or error message
  */
-export async function executeListDir(args: Record<string, unknown>, _signal?: AbortSignal): Promise<string> {
+export async function executeListDir(args: Record<string, unknown>, signal?: AbortSignal): Promise<string> {
   const dirPath = resolveFilePath(String(args.path || '.'));
+
+  if (signal?.aborted) return '[Cancelled]';
 
   try {
     const stat = fs.statSync(dirPath);
@@ -64,7 +67,7 @@ export async function executeListDir(args: Record<string, unknown>, _signal?: Ab
 
     // If inside a git repo, batch-check all remaining entries against .gitignore
     let ignoredCount = 0;
-    const inGitRepo = isInsideGitRepo();
+    const inGitRepo = getIsGit();
 
     if (inGitRepo) {
       // Build paths for every entry — append '/' for directories so that

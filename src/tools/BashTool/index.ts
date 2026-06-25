@@ -1,4 +1,4 @@
-import { exec, ChildProcess } from 'child_process';
+import { exec } from 'child_process';
 import type OpenAI from 'openai';
 import { getCwd, truncateOutput } from '../../utils/helpers.js';
 

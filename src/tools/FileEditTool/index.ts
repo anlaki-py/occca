@@ -39,9 +39,12 @@ Usage:
   },
 };
 
-export async function executeFileEdit(args: Record<string, unknown>, _signal?: AbortSignal): Promise<string> {
+export async function executeFileEdit(args: Record<string, unknown>, signal?: AbortSignal): Promise<string> {
   const filePath = resolveFilePath(String(args.file_path || ''));
   const oldString = String(args.old_string || '');
+
+  if (signal?.aborted) return '[Cancelled]';
+
   const newString = String(args.new_string ?? '');
   const replaceAll = Boolean(args.replace_all);
 

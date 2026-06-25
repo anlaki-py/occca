@@ -1,20 +1,9 @@
 // Config utility — derives runtime OCCCAConfig from the active model profile
 // Env vars still take precedence over saved values
 
-import path from 'path';
-import os from 'os';
 import type { OCCCAConfig } from '../types/index.js';
-import { getActiveModel, loadModels, saveModels, getModelsConfigPath } from './models.js';
-
-const CONFIG_DIR = path.join(os.homedir(), '.occca');
-
-/**
- * Get the config directory path.
- * @returns Absolute path to ~/.occca
- */
-export function getConfigDir(): string {
-  return CONFIG_DIR;
-}
+import { getActiveModel, getModelsConfigPath, loadModels, saveModels } from './models.js';
+import type { ModelProfile } from '../types/index.js';
 
 /**
  * Get the path to the config file (now models.json).
@@ -62,7 +51,7 @@ export function getActiveApiKeys(): string[] {
  */
 export function saveFullConfig(config: OCCCAConfig): void {
   const modelsConfig = loadModels();
-  const active = modelsConfig.models.find(m => m.id === modelsConfig.activeModelId);
+  const active = modelsConfig.models.find((m: ModelProfile) => m.id === modelsConfig.activeModelId);
 
   if (active) {
     // If the key changed, replace the first key in the pool
@@ -76,21 +65,4 @@ export function saveFullConfig(config: OCCCAConfig): void {
   }
 }
 
-/**
- * Partially update the active model profile.
- * @param config - Partial fields to merge
- */
-export function saveConfig(config: Partial<OCCCAConfig>): void {
-  const modelsConfig = loadModels();
-  const active = modelsConfig.models.find(m => m.id === modelsConfig.activeModelId);
 
-  if (active) {
-    if (config.apiKey !== undefined && config.apiKey !== active.apiKeys[0]) {
-      active.apiKeys[0] = config.apiKey;
-    }
-    if (config.baseUrl !== undefined) active.baseUrl = config.baseUrl;
-    if (config.model !== undefined) active.model = config.model;
-    if (config.temperature !== undefined) active.temperature = config.temperature;
-    saveModels(modelsConfig);
-  }
-}

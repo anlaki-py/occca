@@ -4,7 +4,7 @@
 
 import readline from 'readline';
 import { program } from 'commander';
-import { getConfig, getActiveApiKeys, saveFullConfig, getConfigPath } from '../utils/config.js';
+import { getConfig, getActiveApiKeys, getConfigPath } from '../utils/config.js';
 import type { OCCCAConfig } from '../types/index.js';
 import { Agent } from '../agent.js';
 import { loadHistory, saveHistoryLine } from '../utils/history.js';
@@ -650,8 +650,9 @@ async function handleModelCommand(
             // If we deleted the active model, refresh to the new active
             if (wasActive) {
               applyActiveModel(config, agent);
-              const newActive = loadModels().models.find(m => m.id === loadModels().activeModelId);
-              printInfo(`Switched to "${newActive?.name}".`);
+          const modelsConfig = loadModels();
+          const newActive = modelsConfig.models.find(m => m.id === modelsConfig.activeModelId);
+          printInfo(`Switched to "${newActive?.name}".`);
             }
           } else {
             printError('Failed to remove model.');

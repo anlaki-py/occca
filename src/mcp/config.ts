@@ -2,15 +2,15 @@
 
 import { readFile, access, writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
-import { homedir } from 'os';
 import { McpJsonConfigSchema, type McpServerConfig } from './types.js';
+import { CONFIG_DIR } from '../utils/paths.js';
 
 /**
  * Get the path to the global MCP config file (~/.occca/mcp.json).
  * @returns Absolute path to the global mcp.json file
  */
 export function getGlobalMcpConfigPath(): string {
-  return join(homedir(), '.occca', 'mcp.json');
+  return join(CONFIG_DIR, 'mcp.json');
 }
 
 /**
@@ -18,7 +18,7 @@ export function getGlobalMcpConfigPath(): string {
  * @returns Absolute path to the MCP preferences file
  */
 export function getMcpPreferencesPath(): string {
-  return join(homedir(), '.occca', 'mcp-preferences.json');
+  return join(CONFIG_DIR, 'mcp-preferences.json');
 }
 
 /**
@@ -52,7 +52,7 @@ export async function loadMcpPreferences(): Promise<McpPreferences> {
  */
 export async function saveMcpPreferences(prefs: McpPreferences): Promise<void> {
   const prefsPath = getMcpPreferencesPath();
-  const configDir = join(homedir(), '.occca');
+  const configDir = CONFIG_DIR;
 
   // Ensure directory exists
   await mkdir(configDir, { recursive: true });
@@ -124,29 +124,16 @@ export async function loadMcpConfig(): Promise<Record<string, McpServerConfig>> 
     console.log(`[MCP] Loaded ${serverCount} server(s) from ${scopeLabel} config: ${configPath}`);
 
     // Expand environment variables in config values
-    const expanded = expandEnvVars(result.data.mcpServers);
+    const expanded: Record<string, McpServerConfig> = {};
+    for (const [name, config] of Object.entries(result.data.mcpServers)) {
+      expanded[name] = expandConfigEnvVars(config);
+    }
 
     return expanded;
   } catch (error) {
     console.error(`[MCP] Failed to load mcp.json: ${error}`);
     return {};
   }
-}
-
-/**
- * Expand environment variables in config values.
- * Supports ${VAR_NAME} syntax in command, args, url, and headers.
- */
-function expandEnvVars(
-  servers: Record<string, McpServerConfig>
-): Record<string, McpServerConfig> {
-  const expanded: Record<string, McpServerConfig> = {};
-
-  for (const [name, config] of Object.entries(servers)) {
-    expanded[name] = expandConfigEnvVars(config);
-  }
-
-  return expanded;
 }
 
 /**
