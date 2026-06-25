@@ -11,6 +11,7 @@ out/
 .nuxt/
 .cache/
 dist/bin/
+bin/
 
 # Environment files
 .env
